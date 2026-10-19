@@ -1,0 +1,25 @@
+# 视频和图片：数据太大，不进仓库，本地留着
+data/videos/
+data/samples/
+data/dataset/
+data/aicity/
+
+# 模型权重：太大，需要时自己放
+models/*.pt
+
+# 跑出来的结果
+outputs/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# RKNN 模型：体积大，转换脚本在 tools/，需要时自己转
+models/*.rknn
+models/*.onnx
+
+# 运行产物
+output/
+
+# 会话临时文件
+.tmp_*
