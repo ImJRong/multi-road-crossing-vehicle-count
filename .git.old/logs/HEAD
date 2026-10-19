@@ -1,0 +1,11 @@
+0000000000000000000000000000000000000000 8261a91b10007b6ca293cd0be3eabfe740c747d6 ImJRong <imrong@users.noreply.github.com> 1792248734 +0800	commit (initial): 多路口车流量统计：检测、跟踪、分方向计数，支持多路并行
+8261a91b10007b6ca293cd0be3eabfe740c747d6 0000000000000000000000000000000000000000 jiarong <RONGG759@hotmail.com> 1792248748 +0800	Branch: renamed refs/heads/main to refs/heads/main
+8261a91b10007b6ca293cd0be3eabfe740c747d6 8261a91b10007b6ca293cd0be3eabfe740c747d6 jiarong <RONGG759@hotmail.com> 1792248748 +0800	Branch: renamed refs/heads/main to refs/heads/main
+8261a91b10007b6ca293cd0be3eabfe740c747d6 107b2b62374165e5f9bea2c15d819782c9566029 jiarong <RONGG759@hotmail.com> 1792312950 +0800	commit: 完善了一些配置
+107b2b62374165e5f9bea2c15d819782c9566029 144f482cd4ab5fa5b493d0aa4f7389998743d7bb jiarong <RONGG759@hotmail.com> 1792313387 +0800	commit: 完善了一些配置文件
+144f482cd4ab5fa5b493d0aa4f7389998743d7bb 4b881a749098fd2d88a13147e93fef77686cc04d jiarong <RONGG759@hotmail.com> 1792316153 +0800	commit: 修正合并表打印条件，导出 Detrac 模型 ONNX
+4b881a749098fd2d88a13147e93fef77686cc04d 954c4f0133d5bf3e452bc6625ba3b7102841dff0 jiarong <RONGG759@hotmail.com> 1792321875 +0800	commit: 微调
+954c4f0133d5bf3e452bc6625ba3b7102841dff0 4b6866a338c49e44a3694cecfcdc1c8c38c61b91 jiarong <RONGG759@hotmail.com> 1792332350 +0800	commit: 文档同步：README 按实际进度重写，项目记忆补 C++ 交接
+4b6866a338c49e44a3694cecfcdc1c8c38c61b91 ba39be1fa47bd7846bfbd1112ebe1cb5c90d5003 jiarong <RONGG759@hotmail.com> 1792332357 +0800	commit: 新增 C++ 版：ROI 裁剪、IoU 跟踪、穿线计数
+ba39be1fa47bd7846bfbd1112ebe1cb5c90d5003 446ed9b02741be9da1655666f6b2fd4227fdf2cf jiarong <RONGG759@hotmail.com> 1792332721 +0800	commit: C++ 目录补独立说明：编译、运行、代码结构、实测数据
+446ed9b02741be9da1655666f6b2fd4227fdf2cf 571de3b144890723e0405e31f26d895ab2dbd48d jiarong <RONGG759@hotmail.com> 1792333045 +0800	commit: 移除误加的 C++ 目录，C++ 改为独立仓库

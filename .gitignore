@@ -1,0 +1,15 @@
+# 视频和图片：数据太大，不进仓库，本地留着
+data/videos/
+data/samples/
+data/dataset/
+data/aicity/
+
+# 模型权重：太大，需要时自己放
+models/*.pt
+
+# 跑出来的结果
+outputs/
+
+# Python 缓存
+__pycache__/
+*.pyc

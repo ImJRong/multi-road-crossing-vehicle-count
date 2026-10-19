@@ -1,0 +1,62 @@
+{
+  "说明": "一个摄像头一份配置. 从上往下改: video -> detect -> roi -> lines -> draw -> output.",
+  "name": "test3",
+  "video": "data/videos/test3.mp4",
+  "说明_detect": "imgsz 送进模型的图多大; conf 置信度, 调高更严但漏检更多; iou 是 NMS 重叠阈值, 调小相邻两车更不容易被拆成两辆.",
+  "detect": {
+    "imgsz": 640,
+    "conf": 0.4,
+    "iou": 0.25
+  },
+  "说明_roi": "检测区域多边形, 用整图坐标. 要往车来的方向留 1~2 秒助跑区, 否则车一进画面就压线, 会漏.",
+  "roi": [
+    [1255, 685],
+    [196, 685],
+    [196, 341],
+    [1254, 340]
+  ],
+  "说明_lines": [
+    "a b 是线的两个端点, 线画到哪就只管哪一段.",
+    "margin 线两侧死区(像素), 压线抖动不算过线, 防重复计数.",
+    "count_dir 只数一个方向: pos / neg, 删掉这项 = 两个方向都数.",
+    "group 几条线填同一个名字就合并成一路, 不写就按线名各算各的.",
+    "label_at 那个 A/B/C 数字写在哪, [x, y] 是文字左下角, 删掉就自动放线的上端."
+  ],
+  "lines": [
+    {
+      "name": "A",
+      "a": [170, 550],
+      "b": [1020, 550],
+      "count_dir": "pos",
+      "margin": 6,
+      "label_at": [176, 540]
+    },
+    {
+      "name": "B",
+      "a": [920, 450],
+      "b": [1250, 420],
+      "count_dir": "neg",
+      "margin": 6,
+      "label_at": [1100, 410]
+    }
+  ],
+  "说明_draw": "画面怎么画. 颜色一律 [B, G, R]: 绿[0,255,0] 红[0,0,255] 蓝[255,0,0] 黄[0,255,255] 白[255,255,255].",
+  "draw": {
+    "roi": false,
+    "box": true,
+    "box_width": 1,
+    "box_color": [0, 255, 0],
+    "id": true,
+    "label": false,
+    "font_scale": 0.5,
+    "text_width": 2,
+    "counter_scale": 0.8,
+    "text_color": [0, 0, 255],
+    "line_color": [0, 0, 255],
+    "line_width": 2,
+    "roi_color": [0, 200, 255]
+  },
+  "说明_output": "output: save 存视频, show 实时播放(Q 或 Esc 退出). max_frames 只跑前多少帧, 0 = 全部.",
+  "output": "show",
+  "max_frames": 0
+}

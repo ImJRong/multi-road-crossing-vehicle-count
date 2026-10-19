@@ -1,0 +1,20 @@
+{
+    "python.defaultInterpreterPath": "D:\\miniconda3\\envs\\yolo\\python.exe",
+    "python.terminal.activateEnvironment": true,
+    "python.terminal.activateEnvInCurrentTerminal": false,
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "files.encoding": "utf8",
+    "editor.fontSize": 14,
+    "editor.tabSize": 4,
+    "files.autoSave": "afterDelay",
+    "explorer.confirmDelete": false,
+
+    "code-runner.executorMap": {
+        "python": "D:\\miniconda3\\envs\\yolo\\python.exe -u"
+    },
+    "code-runner.runInTerminal": true,
+    "code-runner.ignoreSelection": true,
+    "code-runner.fileDirectoryAsCwd": false,
+    "code-runner.clearPreviousOutput": true
+}
