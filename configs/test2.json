@@ -57,6 +57,6 @@
     "roi_color": [0, 200, 255]
   },
   "说明_output": "output: save 存视频, show 实时播放(Q 或 Esc 退出). max_frames 只跑前多少帧, 0 = 全部.",
-  "output": "show",
+  "output": "save",
   "max_frames": 0
 }
