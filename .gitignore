@@ -13,3 +13,11 @@ outputs/
 # Python 缓存
 __pycache__/
 *.pyc
+
+# RKNN 模型：体积大，转换脚本在 tools/，需要时自己转
+models/*.rknn
+models/*.onnx
+
+# 运行产物
+output/
+
