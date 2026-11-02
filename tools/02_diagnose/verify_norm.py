@@ -4,7 +4,7 @@
 #
 # 跑法（WSL，rknn20 环境）：
 #   cd /mnt/d/multi-road-crossing-vehicle-count
-#   python tools/verify_norm.py
+#   python tools/02_diagnose/verify_norm.py
 
 import cv2
 import numpy as np

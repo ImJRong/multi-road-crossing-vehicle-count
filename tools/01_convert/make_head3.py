@@ -6,7 +6,7 @@
   head3: 删掉 Concat_3，Mul_2_output_0 / Sigmoid_output_0 直接当输出
 
 用法：
-  D:\\miniconda3\\envs\\yolo\\python.exe tools/make_head3.py
+  D:\\miniconda3\\envs\\yolo\\python.exe tools/01_convert/make_head3.py
 校验：两路拼回去必须和原模型 output0 逐元素相等。
 """
 import os
@@ -16,7 +16,7 @@ import onnx
 import onnxruntime as ort
 from onnx import TensorProto, helper
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # tools/xx/ -> 项目根
 SRC = os.path.join(ROOT, "models", "best_detrac.onnx")
 DST = os.path.join(ROOT, "models", "best_detrac_head3.onnx")
 

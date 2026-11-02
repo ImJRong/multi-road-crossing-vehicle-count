@@ -1,10 +1,23 @@
 # 多路口车流量统计（RK3588 部署）
 
-> **接手先读 [`MEMORY.md`](MEMORY.md)**：板子怎么连、模型怎么转、踩过哪些坑、现在卡在哪，都在那一份里。
-
 多路监控视频同时输入，检测车辆，统计各方向的过车数，最后部署到 RK3588 上跑。
 
-Python 版负责验证算法、调参数；C++ 版是板端用的正式实现。两份代码的计数逻辑一一对应。
+Python 版负责验证算法、调参数、转模型；C++ 版是板端用的正式实现。两份代码的计数逻辑一一对应。
+
+## 先看哪个文档
+
+本仓库（Python 版）：https://github.com/ImJRong/multi-road-crossing-vehicle-count
+C++ 版：https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp
+
+| 目的 | 去哪 |
+|---|---|
+| **接手这个项目** | [MEMORY.md](MEMORY.md)（板子怎么连、模型怎么转、踩过哪些坑、现在卡在哪） |
+| **搞懂框偏移是怎么修的** | [docs/head4_原理详解.md](docs/head4_原理详解.md)（11 节，从量化刻度讲起，带 11 张图） |
+| 转模型 / 换模型 | [tools/README.md](tools/README.md) |
+| C++ 板端代码 | [multi-road-crossing-vehicle-count-cpp](https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp) |
+| 准备数据集、调计数线 | 本文下面「跑法」和「训练数据怎么准备」 |
+
+> 跨仓库的链接必须写完整 URL，相对路径只在本仓库内有效。
 
 ## 目录结构
 
@@ -13,12 +26,12 @@ Python 版负责验证算法、调参数；C++ 版是板端用的正式实现。
 | `data/videos/` | 原始路口视频（test1~test4，各一个文件） |
 | `data/samples/` | 从视频里抽的帧，用来画 ROI / 计数线 |
 | `data/dataset/`、`data/aicity/` | 训练数据，不进仓库 |
-| `models/` | `best_detrac.pt`（当前主力）、`.onnx`（中转）、`.rknn`（板子用） |
+| `models/` | `best_detrac.onnx`（中转）、`best_detrac_head3.onnx`、`best_detrac_head4.onnx`（当前主力）、`.rknn`（板子用） |
 | `src/` | Python 主流程：检测、跟踪、计数、报告、多路并行 |
 | `configs/` | 每个路口一份 json：ROI、计数线、检测参数、画法 |
 | `outputs/` | 跑出来的结果：带框的视频、计数 csv |
-| `tools/` | 辅助脚本：抽帧、画线、读坐标、准备数据集 |
-| `docs/` | `项目记忆.md`（进度和踩坑，接着干先看这个）、`设计要点.md`（待做改进清单） |
+| `tools/` | 辅助脚本，按用途分 5 组（见 `tools/README.md`） |
+| `docs/` | `head4_原理详解.md`（框偏移方案）、`设计要点.md`（待做清单）、`INT8验证方案.md` |
 
 C++ 版**不在本仓库**，它单独放在 WSL：`/home/imrong/traffic_count`（另一个 git 仓库）。
 两个环境各自独立，只共用 `configs/` 和 `data/` 这两份数据，不来回搬产物。
@@ -56,21 +69,19 @@ python src\04_count_lanes.py test3
 
 ### 工具
 
+`tools/` 下有 50 多个脚本，按用途分了 5 组，**完整清单和用法见 [`tools/README.md`](tools/README.md)**。
+最常用的几个：
+
 | 工具 | 干什么 |
 |---|---|
-| `tools/grab_frame.py` | 导出某一帧：`python tools\grab_frame.py data\videos\test4.mp4 300` |
-| `tools/make_line_base.py` | 生成带 ROI 框的底图，在底图上画线不会画出界 |
-| `tools/read_roi.py` | 读你在图上画的 ROI，写进配置：`--write configs/xxx.json` |
-| `tools/read_line.py` | 读你在图上画的线，支持 `--base <底图>` |
-| `tools/sweep_line.py` | 扫不同高度的线，看各位置覆盖多少车 |
-| `tools/sweep_slope.py` | 扫不同斜率的线 |
-| `tools/cut_video.py` | 剪掉头尾（水印、片尾黑屏） |
-| `tools/extract_frames.py` | 抽帧做训练数据 |
-| `tools/prelabel.py` | 用现有模型预标注，省手工标注的力 |
-| `tools/split_dataset.py` | 按摄像头分组划分训练/验证集 |
-| `tools/prepare_detrac.py` | 把 UA-DETRAC 转成 YOLO 格式 |
-| `tools/kaggle_flow5k.py` | 在 Kaggle 上处理 Intersection-Flow-5K |
-| `tools/check_gpu.py`、`check_obstacle.py` | 环境诊断 |
+| `tools/01_convert/make_head4.py` | 生成 head4 的 ONNX（带自动校验） |
+| `tools/01_convert/verify_head4_decode.py` | 验证距离→坐标公式，差值必须是 0 |
+| `tools/02_diagnose/ch_scan.cpp` | 判断模型好坏：打印 4 个通道各自的范围 |
+| `tools/02_diagnose/batch_box_eval.py` | 批量对比两个模型的框误差 |
+| `tools/04_dataset/read_roi.py` | 读你在图上画的 ROI，写进配置 |
+| `tools/04_dataset/read_line.py` | 读你在图上画的线，支持 `--base <底图>` |
+| `tools/04_dataset/extract_frames.py` | 抽帧做训练数据 |
+| `tools/04_dataset/prepare_detrac.py` | 把 UA-DETRAC 转成 YOLO 格式 |
 
 ## 进度
 
@@ -84,9 +95,15 @@ python src\04_count_lanes.py test3
 - [x] ONNX → RKNN（8.1 MB，fp16 未量化，`target_platform='rk3588'`）
 - [x] C++ 版：ROI + 跟踪 + 计数，PC 上跑通（16~18 帧/秒）
 - [x] INT8 量化验证：1510 张验证集，mAP50 -3.9 点、mAP50-95 -10.7 点
-- [x] C++ 的 RKNN 后端代码（`rknn_detector.cpp` + `USE_RKNN` 开关）；模拟器验过输入格式，fp16 输出与 ONNX 一致
-- [ ] C++ 的 RKNN 版编译验证、RK3588 上多路实时跑、测功耗
-### INT8 量化掉了多少精度（2026-10-22 实测）
+- [x] C++ 的 RKNN 后端代码（`rknn_detector.cpp` + `USE_RKNN` 开关）
+- [x] 板端跑通：18.3 fps，跟踪 + 计数 + 网页实时显示
+- [x] **框偏移修复：中心偏移 6.75 px → 0.03 px**（详见 `docs/head4_原理详解.md`）
+- [x] 多路并行评测工具 `multi_eval`（板端四路并行，合计 62~73 fps）
+- [x] 实测验证：框偏移修复后断号减少 34.3%（2559 → 1680），计数净增 12
+- [x] 计数漏收尾：断号降 34.3%，计数净增 12（余下成因未查证，见 MEMORY.md 6.1）
+- [ ] 板端多路实时跑、测功耗
+
+## INT8 量化掉了多少精度（2026-10-22 实测）
 
 同一份权重导出三个模型，在验证集 1510 张（10795 个标注框）上对比。评估口径 conf=0.001、NMS IoU=0.7，单类。
 
@@ -101,8 +118,11 @@ python src\04_count_lanes.py test3
 - FP16 与 FP32 在本口径下无可测差异，可视为无损
 
 INT8 转换前必须先拆分输出头（boxes + scores 两路输出），否则坐标与分数共用一个量化参数，
-0~1 的分数会被压成 0。生成脚本为 `tools/make_split_head.py`，板端 C++ 需按双输出解析。
-完整数据与说明见 `docs/项目记忆.md` 第十四节。
+0~1 的分数会被压成 0。生成脚本为 `tools/01_convert/make_head3.py`，板端 C++ 会自动识别双输出。
+
+**2026-11-02 补充**：上表的「匹配框中心平均偏移 1.86 px」是在 640 空间测的，
+折算原图约 6.75 px。该偏移现已修复到 0.03 px，方法是把模型输出从坐标改为 DFL 距离。
+原理见 [`docs/head4_原理详解.md`](docs/head4_原理详解.md)。
 
 - [ ] 收集 20 个以上不同机位的训练素材
 - [ ] 标注数据、混训
