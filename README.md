@@ -122,6 +122,8 @@ multi-road-crossing-vehicle-count/
 ├── MEMORY.md               交接文档：板子怎么连、踩过哪些坑、当前卡在哪
 ├── start-traffic.bat       一键激活 conda 环境并进入项目目录
 ├── .gitignore
+├── .gitattributes          统一行尾（仓库内 LF）
+├── LICENSE                 学术使用许可（Academic Use Only）
 ├── configs/                每个路口一份 JSON
 │   └── test1.json ~ test4.json
 ├── data/                   数据（不进仓库）
@@ -488,7 +490,8 @@ anchor + 右距离          刻度 0.327
 | 相关仓库 | https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp （板端 C++ 实现） |
 | 日期 | 2026-11-06 |
 
-**License**：仅供学术研究（Academic Use Only）。未经作者书面许可，不得用于商业用途、不得再分发与对外提供服务。
+**License**：仅供学术研究（Academic Use Only）。完整条款见 [LICENSE](LICENSE)。
+未经作者书面许可，不得用于商业用途、不得再分发与对外提供服务。
 
 模型基于 UA-DETRAC 数据集微调，数据集版权归原作者所有。YOLOv8 采用 Ultralytics 开源实现，
 遵循其 AGPL-3.0 许可。

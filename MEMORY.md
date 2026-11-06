@@ -778,6 +778,29 @@ v11 : 四路全是 0~638                                        ← 坏得更彻
 > behind 1`。处理办法是 `git reset --hard origin/main` 后把本地那几行重新 apply，
 > 不要 force push 覆盖远端。
 
+### 仓库结构清理（2026-11-06）
+
+做了四件事，都是纯结构问题，不影响任何功能：
+
+1. **删掉 `.git.old/`** —— 2026-10-18 首次提交时误把旧 git 目录整个提交进去了，
+   173 个文件 / 18M。`git rm -r --cached .git.old` 后从磁盘删除。历史里仍有这个对象
+   （要彻底清干净得 `git filter-repo`，但不影响 clone 速度太多，暂不做）。
+2. **D 仓库不再存板端 C++ 镜像** —— 原先 `src/rknn_detector.cpp`、`web_main_quad.cpp`、
+   `web_server.cpp`、`web_server.hpp`、`rknn_detector.hpp`、`web.cmake`、`web/quad.html`
+   在 D 仓库是未跟踪副本，正本在 WSL 仓库。两份容易改漏一边，已删除 D 侧副本。
+   以后板端代码**只改 WSL 仓库 `~/traffic_count`**，D 仓库只是 Python 版与文档。
+   `docs/head4_原理详解.md` 与 `docs/实操手册.md` 里提到 `src/rknn_detector.cpp` 的地方
+   指的是 WSL 仓库里的那份。
+3. **加 `LICENSE`** —— 学术使用许可（Academic Use Only），两个仓库同一份（md5
+   `d4c2d87e7923b3a15aeecd4f6f1fb459`，2092 字节）。README 第十节已改为链接到它。
+4. **加 `.gitattributes`** —— 统一行尾规则：文本 `text=auto`（仓库内 LF），二进制
+   （png/jpg/webp/mp4/onnx/rknn/pt/npy/zip）不做转换。起因是 WSL 与 Windows 两侧
+   md5 对不上，实际只是 CRLF 差异。
+
+另外 WSL 仓库执行过 `git config core.filemode false`：此前 `src/rknn_detector.cpp`
+长期显示 `M`，`git diff` 只有 `old mode 100755 / new mode 100644`，内容零改动，
+是文件系统权限位不稳导致的误报。
+
 ### tools 目录结构（2026-11-02 整理过）
 
 ```
@@ -795,6 +818,8 @@ tools/
 
 框偏移已解决，计数漏已收尾，四路分屏网页版已入库并推送。
 板子的四路参数默认值不再写死，改成启动时读 `configs/testN.json` 的 `detect.conf/iou`。
+两个仓库的 README 已按企业级规范重写（十节固定结构），长文归档到 `docs/`。
+仓库结构已清理：删 `.git.old`、去重复的 C++ 镜像、加 LICENSE 与 .gitattributes。
 
 如果以后要继续提升，按投入产出比排序：
 
