@@ -746,24 +746,32 @@ v11 : 四路全是 0~638                                        ← 坏得更彻
 **框偏移已解决（0.03px），计数漏已收尾（断号降 34.3%）**。
 模型转换这条路已经走到头，不要再碰。
 
-### 仓库提交状态（2026-11-06 更新）
+### 仓库提交状态（2026-11-06 晚更新）
 
 | 仓库 | 提交 | 推送 |
 |---|---|---|
-| `D:\multi-road-crossing-vehicle-count`（Python + 文档） | `0faaa7f`「修复框偏移」 | ✅ 已推送 |
-| WSL `~/traffic_count`（C++ 板端） | `9ffc855`「加四路分屏网页版」 | ✅ 已推送 |
+| `D:\multi-road-crossing-vehicle-count`（Python + 文档） | `6deb6d3`「按工程规范重写 README」 | 已推送 |
+| WSL `~/traffic_count`（C++ 板端） | `a6a41c7`「按工程规范重写 README」 | 已推送 |
 
-两个仓库现在都跟 origin 同步，`git rev-list --count origin/main...HEAD` 都是 `0 0`。
+两个仓库现在都跟 origin 同步，`git rev-list --left-right --count origin/main...HEAD` 都是 `0 0`。
 
-**`9ffc855` 提交了什么**（四路网页版整套代码第一次入库）：
-- 新增 `src/web_main_quad.cpp`（648 行）与 `web/quad.html`
-- `src/web_server.cpp` 507→580 行、`web_server.hpp` 146→172 行（多通道版）
-- `web.cmake` 加 `traffic_web_quad` 目标
-- `src/rknn_detector.cpp/hpp` 加 `set_core()` + `rknn_set_verbose()`
-- 删 9 个弃用转换脚本，README 补十二点五节
+**最近三个提交**：
 
-> **推送踩坑**：走 `127.0.0.1` 代理时会卡在 `Failed to connect ... after 0 ms`。
-> 解法是单次绕过：`git -c http.proxy= -c https.proxy= push origin main`，一次就通。
+- `6deb6d3` / `a6a41c7`「按工程规范重写 README」——README 改为十节固定结构（项目简介 / 技术栈 /
+  系统架构 / 环境依赖 / 项目结构 / 编译运行部署 / 核心功能模块 / 技术难点 / 版本记录 / 作者与声明），
+  操作层长文归档到 D 仓库 `docs/实操手册.md`（172 行）与 WSL 仓库 `docs/技术文档.md`（813 行）。
+- `9ffc855`「加四路分屏网页版」——四路网页版整套代码第一次入库：新增 `src/web_main_quad.cpp`
+  （648 行）与 `web/quad.html`；`src/web_server.cpp` 507→580 行、`web_server.hpp` 146→172 行；
+  `web.cmake` 加 `traffic_web_quad` 目标；`src/rknn_detector.cpp/hpp` 加 `set_core()` +
+  `rknn_set_verbose()`；删 9 个弃用转换脚本。
+- `01c71e7`「加四路分屏网页版」（D 仓库，仅改 MEMORY.md）。
+
+> **推送踩坑（纠正此前的错误结论）**：本机 `git config --global http.proxy` 有值，为
+> `http://127.0.0.1:7892`，对应代理软件的本地端口。**代理软件开着时，加
+> `-c http.proxy= -c https.proxy=` 反而会失败**（直连 443 被阻，报
+> `Failed to connect to github.com:443 after 21066 ms`），直接 `git push origin main` 就能通。
+> 反之，代理软件没开时才需要用 `-c` 绕过（否则卡在 `after 0 ms`）。
+> 判断方法：`netstat -ano | findstr LISTENING | findstr 7892`，有监听就直接 push。
 
 > **踩坑（2026-11-06）**：D 仓库和 origin 曾各自有一个「修复框偏移」提交（本地
 > `ca9fc45`、远端 `0faaa7f`），只差 MEMORY.md 里 8 行仓库状态表，导致 `ahead 1,
