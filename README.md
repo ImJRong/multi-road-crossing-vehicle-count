@@ -172,6 +172,7 @@ multi-road-crossing-vehicle-count/
 | 训练数据、参数标定、量化实验 | [docs/实操手册.md](docs/实操手册.md) |
 | 转模型 / 换模型 | [tools/README.md](tools/README.md) |
 | 板端 C++ 代码 | [multi-road-crossing-vehicle-count-cpp](https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp) |
+| C++ 代码怎么读（逐文件逐函数讲解） | 板端仓库 [docs/代码走读.md](https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp/blob/main/docs/%E4%BB%A3%E7%A0%81%E8%B5%B0%E8%AF%BB.md) |
 
 ## 六、编译 / 运行 / 部署
 
