@@ -1,111 +1,456 @@
-# 多路口车流量统计（RK3588 部署）
+# 多路口车流量统计系统 · Python 原型与模型转换
 
-多路监控视频同时输入，检测车辆，统计各方向的过车数，最后部署到 RK3588 上跑。
+**Multi-Road Crossing Vehicle Counting System (Python Prototype)**
 
-Python 版负责验证算法、调参数、转模型；C++ 版是板端用的正式实现。两份代码的计数逻辑一一对应。
+## 一、项目简介
 
-## 先看哪个文档
+本项目面向城市多路口监控场景，基于 YOLOv8 单类车辆检测与 ByteTrack 多目标跟踪，实现车辆实时检测、轨迹编号、穿线计数与分方向统计，并提供从训练、模型转换到边缘部署的完整链路。
 
-本仓库（Python 版）：https://github.com/ImJRong/multi-road-crossing-vehicle-count
-C++ 版：https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp
+**项目背景**：路口车流量调查长期依赖人工计数或埋设线圈检测器，前者人力成本高、后者需要破路施工。基于视觉的方案可直接复用既有监控摄像头，但受限于边缘设备算力，必须采用定点量化模型，由此带来精度损失。
 
-| 目的 | 去哪 |
+**解决的核心问题**：在 RK3588 NPU 上以 INT8 量化运行 YOLOv8 时，检测框定位精度严重劣化。项目通过改写检测头输出、将 DFL 距离换算移至 CPU 完成，把框中心偏移从 6.75 px 降至 0.03 px，轨迹断号下降 34.3%。
+
+**应用场景**：路口车流量调查、交通信号配时优化、固定机位交通流统计、边缘侧视频结构化。
+
+**核心技术栈**：Python 3.11 / Ultralytics YOLOv8 / ByteTrack / ONNX / RKNN-Toolkit2。
+
+**仓库分工**
+
+| 仓库 | 内容 |
 |---|---|
-| **接手这个项目** | [MEMORY.md](MEMORY.md)（板子怎么连、模型怎么转、踩过哪些坑、现在卡在哪） |
-| **搞懂框偏移是怎么修的** | [docs/head4_原理详解.md](docs/head4_原理详解.md)（11 节，从量化刻度讲起，带 11 张图） |
+| 本仓库 | Python 原型（算法验证、参数标定）、模型转换脚本、技术文档 |
+| [multi-road-crossing-vehicle-count-cpp](https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp) | 板端 C++ 实现，含四路并行网页监控 |
+
+两套代码独立运行，共用同一份模型与同一套 `configs/*.json` 配置。
+
+## 二、技术栈
+
+| 分类 | 内容 |
+|---|---|
+| 开发语言 | Python 3.11.16 |
+| 核心框架 | Ultralytics 8.4.157、PyTorch 2.14.0+cpu |
+| 视觉库 | OpenCV 5.0.0.93 |
+| 多目标跟踪 | ByteTrack（Ultralytics 内置实现），依赖 lap 0.5.13 |
+| 模型转换 | ONNX 1.23.0、ONNX Runtime 1.30.0、RKNN-Toolkit2 1.6.0+81f21f4d |
+| 数值与绘图 | NumPy 2.4.6、Matplotlib 3.11.2 |
+| 开发环境 | Windows 11、Miniconda（conda 环境 `yolo`） |
+
+## 三、系统架构
+
+系统按职责分为四层：应用层负责具体业务脚本，算法层封装检测 / 跟踪 / 计数逻辑，
+数据处理层负责配置解析与结果落盘，模型层负责训练与格式转换。
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ 应用层  01_detect_video.py  只检测                           │
+│         02_track_video.py   加跟踪                           │
+│         03_count_video.py   单线计数                         │
+│         04_count_lanes.py   多线分区计数（主入口）           │
+│         05_export_csv.py    汇总报告                         │
+│         06_multistream.py   多路并行                         │
+│         07_train.py         训练                             │
+├───────────────────────────────┬──────────────────────────────┤
+                                │
+├───────────────────────────────┴──────────────────────────────┤
+│ 算法层  counter.py          穿线计数核心（04 与 06 共用）    │
+│         ultralytics YOLO    检测 + ByteTrack 跟踪            │
+├───────────────────────────────┬──────────────────────────────┤
+                                │
+├───────────────────────────────┴──────────────────────────────┤
+│ 数据层  configs/*.json     ROI、计数线、检测参数             │
+│         outputs/*.csv       过线记录                         │
+│         outputs/*.mp4       带框画面                         │
+├───────────────────────────────┬──────────────────────────────┤
+                                │
+├───────────────────────────────┴──────────────────────────────┤
+│ 模型层  tools/01_convert/   改写检测头、生成 ONNX            │
+│         tools/03_failed/    失败方案存档（勿重复）           │
+│         models/*.onnx       中间产物                         │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## 四、环境依赖
+
+### 4.1 Windows 本机（Python 原型）
+
+| 项 | 版本 |
+|---|---|
+| 操作系统 | Windows 11 家庭中文版（build 22000） |
+| Python | 3.11.16（conda 环境 `yolo`，路径 `D:\miniconda3\envs\yolo\python.exe`） |
+| ultralytics | 8.4.157 |
+| torch | 2.14.0+cpu |
+| opencv-python | 5.0.0.93 |
+| lap | 0.5.13 |
+| numpy | 2.4.6 |
+| onnx | 1.23.0 |
+| onnxruntime | 1.30.0 |
+| matplotlib | 3.11.2 |
+
+本机无独立显卡，仅 Intel Iris Xe 核显。单路约 22 帧/秒，四路并行合计约 31 帧/秒。
+训练必须使用云 GPU（Kaggle）。
+
+### 4.2 WSL Ubuntu（模型转换）
+
+| 项 | 版本 |
+|---|---|
+| 操作系统 | Ubuntu 26.04.1 LTS（WSL2） |
+| 编译器 | g++ 15.2.0 |
+| 构建工具 | CMake 4.2.3 |
+| conda | Miniforge3（`~/miniforge3`） |
+| 模型转换 | rknn-toolkit2 1.6.0+81f21f4d，conda 环境 `rknn16`，Python 3.10.22 |
+| 对照环境 | rknn-toolkit2 2.5.0，conda 环境 `rknn` / `rknn20`，Python 3.10.22 |
+
+只允许使用 1.6.0 完成转换。2.5.0 转出的模型宽高放大 13 倍，原因见 §八 难点三。
+
+### 4.3 板端 RK3588（部署目标）
+
+| 项 | 版本 |
+|---|---|
+| 硬件 | Orange Pi 5 Plus（RK3588，8 核，5.8 GiB） |
+| 操作系统 | Ubuntu 22.04.5，内核 5.10.160-rockchip-rk3588 |
+| 编译器 | g++ 11.4.0、CMake 3.22.1 |
+| NPU 运行库 | librknnrt.so 2.5.0 |
+| OpenCV | 4.5.4 |
+
+板端编译与运行见 [C++ 仓库 README](https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp)。
+
+## 五、项目结构
+
+```
+multi-road-crossing-vehicle-count/
+├── README.md               本文件
+├── MEMORY.md               交接文档：板子怎么连、踩过哪些坑、当前卡在哪
+├── start-traffic.bat       一键激活 conda 环境并进入项目目录
+├── .gitignore
+├── configs/                每个路口一份 JSON
+│   └── test1.json ~ test4.json
+├── data/                   数据（不进仓库）
+│   ├── videos/             原始路口视频 test1~test4
+│   ├── samples/            抽帧图，用于画 ROI / 计数线
+│   ├── dataset/            训练数据
+│   └── aicity/             外部数据集
+├── src/                    Python 主流程
+│   ├── 01_detect_video.py  逐帧检测、画框
+│   ├── 02_track_video.py   加跟踪、编号
+│   ├── 03_count_video.py   单条计数线，分方向计数
+│   ├── 04_count_lanes.py   按配置跑：ROI + 跟踪 + 多线计数（主入口）
+│   ├── 05_export_csv.py    汇总报告
+│   ├── 06_multistream.py   多路并行
+│   ├── 07_train.py         训练
+│   └── counter.py          计数核心（04 / 06 共用）
+├── models/                 模型文件
+│   ├── best_detrac.onnx    中转 ONNX
+│   ├── best_detrac_head2.onnx  双输出头 ONNX（坐标，旧）
+│   ├── best_detrac_head3.onnx  双输出头 ONNX（坐标）
+│   └── best_detrac_head4.onnx  双输出头 ONNX（DFL 距离，当前主力）
+├── tools/                  辅助脚本，按用途分 5 组
+│   ├── 01_convert/         模型转换主线
+│   ├── 02_diagnose/        诊断验证
+│   ├── 03_failed/          失败方案存档
+│   ├── 04_dataset/         数据集处理
+│   ├── 05_figures/         讲解配图生成
+│   └── README.md           完整清单与用法
+├── docs/                   文档
+│   ├── 实操手册.md         训练数据、参数标定、量化实验、板端说明
+│   ├── head4_原理详解.md   框偏移方案推导（11 节，11 张图）
+│   ├── 设计要点.md         设计决策与待做清单
+│   ├── INT8验证方案.md     INT8 精度验证结论
+│   ├── 归档-项目记忆-2026-10-22.md  已归档的历史记录
+│   ├── figures/            原理讲解配图（11 张）
+│   └── screenshots/        INT8 偏移现象的现场截图（3 张）
+└── outputs/                运行产物：过线记录 CSV、带框视频（不进仓库）
+```
+
+**配套文档**
+
+| 想知道什么 | 去哪 |
+|---|---|
+| 接手项目、排查环境问题 | [MEMORY.md](MEMORY.md) |
+| 框偏移是怎么修的 | [docs/head4_原理详解.md](docs/head4_原理详解.md) |
+| 训练数据、参数标定、量化实验 | [docs/实操手册.md](docs/实操手册.md) |
 | 转模型 / 换模型 | [tools/README.md](tools/README.md) |
-| C++ 板端代码 | [multi-road-crossing-vehicle-count-cpp](https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp) |
-| 准备数据集、调计数线 | 本文下面「跑法」和「训练数据怎么准备」 |
+| 板端 C++ 代码 | [multi-road-crossing-vehicle-count-cpp](https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp) |
 
-> 跨仓库的链接必须写完整 URL，相对路径只在本仓库内有效。
+## 六、编译 / 运行 / 部署
 
-## 目录结构
+本项目为 Python 工程，无需编译。以下步骤可在 Windows 本机直接复现。
 
-| 目录 | 放什么 |
-|---|---|
-| `data/videos/` | 原始路口视频（test1~test4，各一个文件） |
-| `data/samples/` | 从视频里抽的帧，用来画 ROI / 计数线 |
-| `data/dataset/`、`data/aicity/` | 训练数据，不进仓库 |
-| `models/` | `best_detrac.onnx`（中转）、`best_detrac_head3.onnx`、`best_detrac_head4.onnx`（当前主力）、`.rknn`（板子用） |
-| `src/` | Python 主流程：检测、跟踪、计数、报告、多路并行 |
-| `configs/` | 每个路口一份 json：ROI、计数线、检测参数、画法 |
-| `outputs/` | 跑出来的结果：带框的视频、计数 csv |
-| `tools/` | 辅助脚本，按用途分 5 组（见 `tools/README.md`） |
-| `docs/` | `head4_原理详解.md`（框偏移方案）、`设计要点.md`（待做清单）、`INT8验证方案.md` |
-
-C++ 版**不在本仓库**，它单独放在 WSL：`/home/imrong/traffic_count`（另一个 git 仓库）。
-两个环境各自独立，只共用 `configs/` 和 `data/` 这两份数据，不来回搬产物。
-
-## 跑法
-
-所有 Python 脚本都在项目根目录跑（脚本里用的是相对路径）。
+### 6.1 准备环境
 
 ```bat
-cd /d D:\multi-road-crossing-vehicle-count
-D:\yolo-practice\start-yolo.bat        :: 或者双击 start-traffic.bat
+:: 1. 取代码
+git clone https://github.com/ImJRong/multi-road-crossing-vehicle-count.git
+cd multi-road-crossing-vehicle-count
+
+:: 2. 创建并激活 conda 环境
+conda create -n yolo python=3.11.16 -y
+conda activate yolo
+
+:: 3. 安装依赖
+pip install ultralytics==8.4.157 torch==2.14.0+cpu opencv-python==5.0.0.93 ^
+            lap==0.5.13 numpy==2.4.6 onnx==1.23.0 onnxruntime==1.30.0 matplotlib==3.11.2
+
+:: 或者直接双击 start-traffic.bat（内部已包含环境激活）
+```
+
+### 6.2 准备数据与配置
+
+`configs/` 已随仓库提供 `test1.json` ~ `test4.json`，无需手工创建。
+视频文件因体积原因不入库，需自行放入：
+
+```bat
+mkdir data\videos
+:: 把 test1.mp4 ~ test4.mp4 放进 data\videos\
+```
+
+四个配置分别对应四段视频，`roi`、`lines`、`detect` 参数各不相同，
+新增路口时复制一份最接近的配置改数值即可。配置结构见 §七 模块 6。
+
+### 6.3 运行
+
+所有脚本都在**项目根目录**执行（脚本内使用相对路径）。
+
+**单路计数（主入口）**
+
+```bat
 python src\04_count_lanes.py test3
 ```
 
-| 脚本 | 干什么 | 输出 |
-|---|---|---|
-| `src/01_detect_video.py` | 逐帧检测，画框 | `outputs/test1_detect.mp4` |
-| `src/02_track_video.py` | 加跟踪，给每辆车编号 | `outputs/test1_track.mp4` |
-| `src/03_count_video.py` | 单条计数线，分两个方向数 | `outputs/test1_count.mp4` |
-| `src/04_count_lanes.py` | 按配置跑：ROI 裁剪 + 跟踪 + 多条线计数 | `outputs/testN_lanes.mp4`、`outputs/records_testN.csv` |
-| `src/05_export_csv.py` | 把原始记录汇总成报告 | `outputs/report.csv` |
-| `src/06_multistream.py` | 多路并行，一个进程管一路 | `outputs/<名字>_lanes.mp4` |
-| `src/counter.py` | 计数核心，04 和 06 共用，不单独跑 | — |
-| `src/07_train.py` | 训练（以官方 yolov8n 为起点，imgsz=640） | `runs/.../weights/best.pt` |
+输出：`outputs\records_test3.csv`（过线记录，始终生成）。
+带框视频仅在配置的 `output` 为 `"save"` 时生成到 `outputs\test3_lanes.mp4`；
+为 `"show"` 时改为实时播放窗口，不落盘。四个配置里 test2 用 `save`，其余三个用 `show`。
 
-`06_multistream.py` 可以只跑指定的几路：`python src\06_multistream.py test1 test3`。
+**其他脚本**
 
-### 配置文件的约定
-
-`configs/<名字>.json`，四个视频共用一套结构：`video` / `detect` / `roi` / `lines` / `draw` / `output` / `max_frames`。
-
-一条线只有一个 `a` 和一个 `b`。这两个点同时决定位置、方向和长度，线画到哪就只管那一段。想调高低就改 `a`/`b` 的 y，想调长短就拉长或缩短两端。数字（A/B/C）写在哪由 `label_at` 定，不写就自动放在线的上端。
-
-`output` 填 `"save"` 存 mp4，填 `"show"` 开窗口实时播放（按 Q 退出）。
-
-### 工具
-
-`tools/` 下有 50 多个脚本，按用途分了 5 组，**完整清单和用法见 [`tools/README.md`](tools/README.md)**。
-最常用的几个：
-
-| 工具 | 干什么 |
+| 命令 | 输出 |
 |---|---|
-| `tools/01_convert/make_head4.py` | 生成 head4 的 ONNX（带自动校验） |
-| `tools/01_convert/verify_head4_decode.py` | 验证距离→坐标公式，差值必须是 0 |
-| `tools/02_diagnose/ch_scan.cpp` | 判断模型好坏：打印 4 个通道各自的范围 |
-| `tools/02_diagnose/batch_box_eval.py` | 批量对比两个模型的框误差 |
-| `tools/04_dataset/read_roi.py` | 读你在图上画的 ROI，写进配置 |
-| `tools/04_dataset/read_line.py` | 读你在图上画的线，支持 `--base <底图>` |
-| `tools/04_dataset/extract_frames.py` | 抽帧做训练数据 |
-| `tools/04_dataset/prepare_detrac.py` | 把 UA-DETRAC 转成 YOLO 格式 |
+| `python src\01_detect_video.py test1` | `outputs\test1_detect.mp4` |
+| `python src\02_track_video.py test1` | `outputs\test1_track.mp4` |
+| `python src\03_count_video.py test1` | `outputs\test1_count.mp4` |
+| `python src\05_export_csv.py` | `outputs\report.csv` |
+| `python src\06_multistream.py test1 test3` | `outputs\<名字>_lanes.mp4` |
+| `python src\07_train.py` | `runs\...\weights\best.pt` |
 
-## 进度
+### 6.4 模型转换（ONNX → RKNN）
 
-- [x] 建工程目录
-- [x] 单路检测 / 跟踪 / 穿线计数
-- [x] 分车道、分方向计数，结果存 csv
-- [x] 多路并行（PC 上 4 路，CPU 合计约 31 帧/秒）
-- [x] ROI 裁剪（外接矩形裁剪 + 多边形过滤中心点）
-- [x] 模型：UA-DETRAC 7633 张微调，`P 0.88 / R 0.818 / mAP50 0.908`
-- [x] 导出 ONNX（12.2 MB，输入 640，输出 `[1,5,8400]`）
-- [x] ONNX → RKNN（8.1 MB，fp16 未量化，`target_platform='rk3588'`）
-- [x] C++ 版：ROI + 跟踪 + 计数，PC 上跑通（16~18 帧/秒）
-- [x] INT8 量化验证：1510 张验证集，mAP50 -3.9 点、mAP50-95 -10.7 点
-- [x] C++ 的 RKNN 后端代码（`rknn_detector.cpp` + `USE_RKNN` 开关）
-- [x] 板端跑通：18.3 fps，跟踪 + 计数 + 网页实时显示
-- [x] **框偏移修复：中心偏移 6.75 px → 0.03 px**（详见 `docs/head4_原理详解.md`）
-- [x] 多路并行评测工具 `multi_eval`（板端四路并行，合计 62~73 fps）
-- [x] 实测验证：框偏移修复后断号减少 34.3%（2559 → 1680），计数净增 12
-- [x] 计数漏收尾：断号降 34.3%，计数净增 12（余下成因未查证，见 MEMORY.md 6.1）
-- [ ] 板端多路实时跑、测功耗
+```bat
+:: 第 1 步：Windows 侧生成 ONNX（每步都带校验）
+D:\Python3.12.4\python.exe tools\01_convert\make_head3.py
+D:\Python3.12.4\python.exe tools\01_convert\make_head4.py
+D:\Python3.12.4\python.exe tools\01_convert\verify_head4_decode.py
+:: 必须看到差值 0，否则不要往下走
+```
 
-## INT8 量化掉了多少精度（2026-10-22 实测）
+```bash
+# 第 2 步：WSL 侧转 RKNN
+conda activate rknn16
+cd ~/traffic_count
+python /mnt/d/multi-road-crossing-vehicle-count/tools/01_convert/convert_head4_probe.py
+```
 
-同一份权重导出三个模型，在验证集 1510 张（10795 个标注框）上对比。评估口径 conf=0.001、NMS IoU=0.7，单类。
+```bash
+# 第 3 步：板端验证（不是看帧率，是看数值）
+cd ~/code
+./rknn_probe models/新模型.rknn data/videos/test1.mp4 200
+```
+
+判据：距离输出 `scale` 应为 `0.046943`；`[OUT1 int8]` 行的 `==zp(-128)` 约 8340 为正常，
+8400 表示分数全部为 0，模型不可用。
+
+### 6.5 部署到板端
+
+只同步模型文件：
+
+```bash
+scp models/best_detrac.rknn orangepi@192.168.1.105:~/code/models/
+```
+
+> **配置文件不要直接覆盖。**两个仓库的 `configs/*.json` 同名但内容不同：
+> 本仓库面向 Python 原型调参（如 test1 为 conf 0.1 / iou 0.4），
+> 板端在 INT8 模型上重新标定过（同名文件为 conf 0.3 / iou 0.3）。
+> 板端配置已随 C++ 仓库部署，需要改参数时直接改板上的文件，
+> 比对后手动同步。
+
+板端编译与运行步骤见 [C++ 仓库 README](https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp)。
+
+## 七、核心功能模块
+
+### 1. 检测模块（`src/01_detect_video.py`）
+
+**作用**：逐帧调用 YOLOv8 检测车辆，绘制检测框。
+
+**实现原理**：`ultralytics` 加载 `best_detrac.onnx`，按配置的 `imgsz`（640）与 `conf` 阈值推理，
+结果绘制后写入 mp4。
+
+**关键技术点**：单类检测（`vehicle`），模型基于 UA-DETRAC 7633 张微调，精度 P 0.88 / R 0.818 / mAP50 0.908。
+
+### 2. 跟踪模块（`src/02_track_video.py`）
+
+**作用**：跨帧关联同一车辆，分配稳定编号。
+
+**实现原理**：调用 Ultralytics 内置 ByteTrack（`model.track()`），卡尔曼滤波预测 + 匈牙利匹配 + 两阶段关联。
+
+**关键技术点**：跟踪 ID 会因遮挡或漏检而断裂，因此「出现过多少 ID」不能当作车流量，必须使用穿线计数。
+
+### 3. 计数模块（`src/counter.py`）
+
+**作用**：判定车辆是否穿过计数线，并按方向累计。
+
+**实现原理**：每帧对每辆车计算其相对计数线的侧别。用叉积判断在哪一侧，用投影比例判断是否落在线段范围内，
+符号变化即视为换边。设置死区（`margin` 像素）防止车辆压线时反复计数。
+
+**关键技术点**：`count_dir` 支持单方向统计（`"pos"` = 负侧→正侧，`"neg"` = 正侧→负侧）。
+单行道场景下这是设计意图，不是缺陷。
+
+### 4. 多线分区计数（`src/04_count_lanes.py`）
+
+**作用**：按配置文件执行 ROI 裁剪 + 跟踪 + 多条线计数，是项目的标准入口。
+
+**实现原理**：读取 `configs/<名字>.json`，按 `roi` 多边形裁剪（外接矩形裁剪 + 中心点过滤），
+对每条 `lines` 分别执行穿线计数，结果写入 CSV。
+
+**关键技术点**：ROI 多边形只用于过滤框中心，裁剪用的是它的外接矩形。把区域外涂黑反而会检出更多垃圾框。
+
+### 5. 多路并行模块（`src/06_multistream.py`）
+
+**作用**：一个进程管理多路视频，可指定只跑某几路。
+
+**实现原理**：使用 `multiprocessing` 的 `spawn` 上下文开进程，每路一个进程，各自加载一份模型实例与计数器，共用同一份计数核心代码。
+选进程不选线程的原因：Python 的 GIL 使得多线程无法真正并行执行 Python 层代码。
+
+**关键技术点**：四路并行合计约 31 帧/秒（本机核显，纯 CPU 推理）。进程数超过 CPU 核数反而变慢，因为每个进程都要独立加载一份模型。
+
+### 6. 配置模块（`configs/*.json`）
+
+**作用**：为所有脚本提供统一参数。
+
+**配置结构**
+
+```json
+{
+  "name": "test1",
+  "video": "data/videos/test1.mp4",
+  "max_frames": 0,
+  "detect": { "imgsz": 640, "conf": 0.1, "iou": 0.4 },
+  "roi": [[940,125],[185,125],[185,565],[940,565]],
+  "lines": [
+    { "name": "A", "a": [400,150], "b": [665,150],
+      "count_dir": "neg", "margin": 6, "label_at": [406,140] },
+    { "name": "D", "a": [730,150], "b": [880,280],
+      "count_dir": "neg", "margin": 6, "label_at": [736,140] }
+  ],
+  "draw": { "box": true, "id": true, "line": true },
+  "output": "show"
+}
+```
+
+**关键技术点**：
+
+- 一条线只有一个 `a` 和一个 `b`。两点同时决定位置、方向与长度，线画到哪就只管那一段。
+- `margin` 是线两侧的死区像素数，压线抖动不计入，防止同一辆车被计两次。
+- `count_dir` 只统计一个方向：`"pos"` 为负侧到正侧、`"neg"` 为正侧到负侧。单行道场景下这是设计意图。
+- `output` 在 Python 侧只接受 `"save"`（存 mp4）与 `"show"`（开窗口实时播放，按 Q 退出）。
+  板端 C++ 侧额外支持 `"none"`（不输出，纯测速），无显示器环境下不能用 `"show"`。
+- JSON 中的 `说明_xxx` 键是写给人看的注释，解析时被忽略。
+
+### 7. 模型转换模块（`tools/01_convert/`）
+
+**作用**：把训练好的 PyTorch 权重改写为适合 INT8 量化的双输出结构。
+
+**实现原理**：删除 ONNX 末端的 Concat（合并坐标与分数）以及 DFL 之后的换算节点，
+把检测头拆成两路独立输出，使坐标与分数各自拥有独立的量化参数。
+
+**关键技术点**：`make_head4.py` 生成后必须用 `verify_head4_decode.py` 校验 ——
+把两路输出拼回去与原模型逐元素比较，差值必须为 0。
+
+## 八、关键技术难点与解决方案
+
+### 难点一：INT8 量化导致检测框整体向左上偏移
+
+**问题**：RKNN INT8 模型输出的检测框相比 PC 端 FP32 结果整体向左上偏移，且目标越小偏移越大。
+实测中心偏移 6.75 px（640 空间 1.86 px），在 1920 宽画面上肉眼明显。
+
+**成因**：RKNN 为每个输出张量按 `范围 / 256` 分配量化刻度。原模型把坐标（0~640）与分数（0~1）
+拼在同一个 `[1,5,8400]` 张量里，刻度被坐标撑到 2.5017；而 DFL 内部的距离值只有 0~15，
+在粗刻度下仅剩 6 个有效台阶。误差链条经六步逐级放大 53 倍：
+
+```
+DFL 距离 0~11.97        刻度 0.047
+anchor − 左距离          刻度 0.325   ← 大数减小数，小数值精度被稀释
+anchor + 右距离          刻度 0.327
+两者相加 ÷ 2             刻度 0.625
+两者相减 = 宽高          刻度 0.084
+拼 4 通道 × stride       刻度 2.502
+```
+
+**解决方案**：把模型输出改为 DFL 距离本身，坐标换算移到 C++ 侧用 float 完成。
+
+- 从 ONNX 图中删除 DFL 之后的 9 个换算节点（Slice×2 / Sub×2 / Add×2 / Div / Concat / Mul），
+  将 `/model.22/dfl/Reshape_1_output_0` 设为图输出。这 9 个节点不含权重。
+- 距离成为独立输出后，RKNN 按其真实值域分配刻度 `0.046943`，精度提升 53 倍。
+- C++ 换算：`x1 = (anchor_x − 左距离) × stride`，`y1 = (anchor_y − 上距离) × stride`，右/下边界同理用加号。
+
+**效果**：中心偏移 6.75 px → 0.03 px。模型权重未改、量化方式未改、推理速度未变。
+三道验证全过：ONNX 逐元素差值 0、numpy 公式复算差值 0、板端实测偏移 ≤ 0.04 px。
+
+**易错点**：`stride` 是 8400 长度的数组（前 6400 为 8、中 1600 为 16、后 400 为 32），
+当作标量计算会产生最大 453 像素的误差。anchor 网格也需分段生成 80×80 / 40×40 / 20×20。
+
+### 难点二：拆输出头时分数被全部量化成 0
+
+**问题**：拆分 `[1,5,8400]` 张量时，若在 Concat 之后加 Split，RKNN 编译器会把该节点融合掉，
+导致分数通道全部输出 `-128`（即 zp，对应 0.0）。
+
+**尝试过但失败的方案**：
+
+| 方案 | 结果 |
+|---|---|
+| Concat 之后加 Split | 1.6.0：8400 个分数全为 -128；2.5.0：分数正常但框塌 |
+| Split + `custom_quantize_layers` | `KeyError: '/model.22/Concat_1_output_0'`，配置结构不匹配 |
+| Split + `proposal=False` 的混合量化 | `KeyError: '/model.22/dfl/conv/Conv_output_0'` |
+
+**解决方案**：直接删除末端的 Concat，把 `Mul_2`（坐标）与 `Sigmoid`（分数）各自作为图输出，
+图中不存在可被融合的节点。
+
+### 难点三：rknn-toolkit2 2.5.0 转出的模型宽高放大 13 倍
+
+**问题**：同一份 ONNX、同一批校准图、同一套配置，仅更换工具版本，2.5.0 转出的模型
+宽高放大约 13 倍，四个输出通道的实测范围全部顶到 637.92（= 255 × 2.5 的饱和值），
+而正常模型四个通道范围各不相同。
+
+**排查过程**：先用基线 INT8 与 `auto_hybrid`（自动混合量化）各转一版，两者皆坏。
+再通过冒烟测试确认 `auto_hybrid` 开关本身工作正常（阈值变化确实改变了模型体积与输入 dtype）。
+逐层比对后确认：2.5.0 把 DFL 距离（0~15）与坐标（0~640）塞进同一套量化参数，
+属于工具链缺陷，与混合量化功能无关。
+
+**解决方案**：转换固定使用 rknn-toolkit2 **1.6.0+81f21f4d**。2.5.0 仅用于对照实验。
+
+**补充坑**：2.5.0 的 `build()` 必须加 `disable_rules=["seperate_conv_rs_split"]`，
+否则报 `IndexError: list index out of range`；该参数在 1.6.0 中不被识别。
+
+### 难点四：转弯车辆漏计
+
+**问题**：车辆转弯时计数线判定失效，出现漏计。
+
+**排查与结论**：改用 head4 模型后，12135 帧测试数据上轨迹断号从 2559 降至 1680（下降 34.3%）：
+
+| 视频 | 帧数 | 原模型编号数 | head4 编号数 | 降幅 |
+|---|---|---|---|---|
+| test1 | 3600 | 553 | 450 | 18.6% |
+| test2 | 3600 | 625 | 441 | 29.4% |
+| test3 | 2535 | 909 | 539 | 40.7% |
+| test4 | 2400 | 472 | 250 | 47.0% |
+| 合计 | 12135 | 2559 | 1680 | 34.3% |
+
+计数净增 12 次，无任何一条线下降。说明框抖动导致的编号断裂是一个成因，
+但只解释了约三分之一的漏计。剩余成因未进一步查证，投入产出比不高，已标记收尾。
+
+### 难点五：INT8 量化本身带来的精度损失
+
+**问题**：INT8 相对 FP32 的精度损失需要量化，才能判断是否可接受。
+
+**实测方案**：同一份权重导出三个模型，在验证集 1510 张（10795 个标注框）上对比，
+评估口径 conf=0.001、NMS IoU=0.7，单类，AP 按全点插值。
 
 | 模型 | mAP50 | mAP50-95 | 每图框数 |
 |---|---|---|---|
@@ -113,147 +458,37 @@ python src\04_count_lanes.py test3
 | RKNN FP16 | 0.9426 | 0.7191 | 26.2 |
 | RKNN INT8 | 0.9037 | 0.6125 | 26.2 |
 
-- INT8 相对 FP32：mAP50 下降 3.9 个百分点（4.1%），mAP50-95 下降 10.7 个百分点（14.9%）
-- 损失主要在定位精度：坐标量化步长 2.5 px，匹配框中心平均偏移 1.86 px；每图框数 26.1 → 26.2，检出能力不变
-- FP16 与 FP32 在本口径下无可测差异，可视为无损
+**结论**：INT8 相对 FP32，mAP50 下降 3.9 个百分点（相对 4.1%），mAP50-95 下降 10.7 个百分点（相对 14.9%）。
+损失集中在定位精度而非检出能力（每图框数 26.1 → 26.2 基本不变）。FP16 与 FP32 无可测差异，可视为无损。
 
-INT8 转换前必须先拆分输出头（boxes + scores 两路输出），否则坐标与分数共用一个量化参数，
-0~1 的分数会被压成 0。生成脚本为 `tools/01_convert/make_head3.py`，板端 C++ 会自动识别双输出。
+### 难点六：混训导致灾难性遗忘
 
-**2026-11-02 补充**：上表的「匹配框中心平均偏移 1.86 px」是在 640 空间测的，
-折算原图约 6.75 px。该偏移现已修复到 0.03 px，方法是把模型输出从坐标改为 DFL 距离。
-原理见 [`docs/head4_原理详解.md`](docs/head4_原理详解.md)。
+**问题**：第 2 轮训练用 Intersection-Flow-5K 的 6928 张整个替换 UA-DETRAC 继续训练，
+结果 test3 / test4 反而变差。
 
-- [ ] 收集 20 个以上不同机位的训练素材
-- [ ] 标注数据、混训
-- [ ] 人工真值对照
+**解决方案**：回退到旧模型。后续若要扩展数据集，必须新旧按比例混合训练，不能整体替换。
 
-## 训练数据怎么准备
+## 九、版本迭代记录
 
-⚠️ `data/videos/` 里那 4 个视频是最终测试用的，不能拿去训练。拿它们训练等于用考卷当练习册，测出来的分数是虚的。
-
-数据来源是**多个不同摄像头的画面**，不是同一个视频切很多帧。
-
-| 项 | 目标 |
-|---|---|
-| 总张数 | 150 ~ 300 张 |
-| 摄像头数量 | 20 个以上 |
-| 每个摄像头 | 5 ~ 20 张，覆盖不同时段和车流密度 |
-
-同一个摄像头连拍的帧相似度 95% 以上，标 100 张等于标了同一张的 100 个复印本。宁要 20 个机位各 10 张，不要 1 个机位 200 张。
-
-```bat
-python tools\extract_frames.py data\videos\其他视频.mp4 10
-python tools\prelabel.py 0.3          :: 先自动标一遍，再手工改，能省大半力气
-:: 用标注工具打开 data\dataset\images 改标注，存 YOLO txt 到 data\dataset\labels
-python tools\split_dataset.py         :: 按摄像头分组划分，防止同机位的图两边都出现
-python src\07_train.py
-```
-
-标注标准：肉眼能认出是车的都框，认不出的都不框。远处的小车要框，只框中间的大车，模型会学会忽略远处。骑电动车的人、行人、自行车不框。
-
-**混训的教训**：第 2 轮用 Intersection-Flow-5K 6928 张整个替换掉 UA-DETRAC 接着训，结果 test3/test4 反而更差，属于灾难性遗忘，只能退回旧模型。下次要么新旧按比例混着训，要么别换数据集。
-
-## 关键参数怎么定
-
-计数线的 y 不是猜的，两条路。
-
-自动扫（先用这个）：
-
-```bat
-python tools\sweep_line.py data\videos\test3.mp4 200
-```
-
-它打印每个高度各有多少辆车穿过。挑次数多、又不在车排队等红灯那一带的高度。
-
-手工画：
-
-```bat
-python tools\grab_frame.py data\videos\test1.mp4 1
-:: 用画图工具在那张图上画一条线，另存成别的名字（别覆盖原图）
-python tools\read_line.py data\samples\test1_frame1.jpg data\samples\我画的.jpg --write configs\test1.json 0
-```
-
-它会比对两张图的差异，把线拟合出来，再生成一张核对图让你确认。
-
-ROI 两条规矩：一是不能贴计数线，要留出一个车身的助跑区，否则车刚进视野就到线上，跟踪器还没看清就过线，必漏；二是多边形只用来过滤框中心，裁剪用的是它的外接矩形，把区域外涂黑反而会检出更多垃圾框。
-
-## 输入尺寸
-
-监控画面里车很小，YOLO 默认压到 640×640，远处的车基本消失。同一张 1920×1080 的图实测检出数量：
-
-| 输入尺寸 | 检出的车 |
-|---|---|
-| 640 | 29 |
-| 960 | 51 |
-| 1280 | 71 |
-| 1600 | 84 |
-
-裁出中心区域再送进去效果更明显。同一张图测过：
-
-| 做法 | 中心区检出 | 耗时中位数 |
+| 版本 | 日期 | 内容 |
 |---|---|---|
-| 整图 → 640 | 21 辆 | 32 ms |
-| 整图 → 1280 | 32 辆 | 103 ms |
-| 裁中心 960 → 640 | 31 辆 | 48 ms |
-| 裁中心 960 → 800 | 37 辆 | 73 ms |
+| v1.0.0 | 2026-11-06 | 补齐工程文档：README 按规范重写，操作层内容归档至 `docs/实操手册.md` |
+| v0.9.0 | 2026-11-02 | 修复框偏移：模型输出改为 DFL 距离，中心偏移 6.75 px → 0.03 px；修复计数漏（断号下降 34.3%） |
+| v0.8.0 | 2026-11-01 | 修复计数记录只增不删的内存泄漏；模型转换配方定型 |
+| v0.7.0 | 2026-10-22 | INT8 量化精度验证：拆分输出头，完成 FP32 / FP16 / INT8 三方对比 |
+| v0.6.0 | 2026-10-19 | 补充 RKNN 转换脚本与 Python / C++ 对拍工具 |
+| v0.5.0 | 2026-10-18 | 项目初版：Python 原型与模型导出 |
 
-所以 ROI 裁剪不只是为了排除干扰，它本身就等于放大。
+## 十、作者与声明
 
-**但当前全链路是 640**：训练 640、配置 640、ONNX 640、RKNN 640。1280 只在实验里测过检出数，没有真跑起来过。原因是训练尺寸和部署尺寸必须一致，要上 1280 得重训、重导 ONNX 和 RKNN，还要在板子上复测帧率。这件事没做，是目前精度的主要缺口。
+| 项 | 内容 |
+|---|---|
+| 作者 | jiarong（RONGG） |
+| 仓库 | https://github.com/ImJRong/multi-road-crossing-vehicle-count |
+| 相关仓库 | https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp （板端 C++ 实现） |
+| 日期 | 2026-11-06 |
 
-## 环境
+**License**：仅供学术研究（Academic Use Only）。未经作者书面许可，不得用于商业用途、不得再分发与对外提供服务。
 
-Windows 本机（Python 原型）：
-
-- conda 环境 `yolo`，`D:\miniconda3\envs\yolo\python.exe`
-- Python 3.11.16，ultralytics 8.4.157，torch 2.14.0+cpu，opencv 5.0.0，lap 0.5.13
-- 没有独立显卡，只有 Intel 核显。单路约 22 帧/秒，4 路并行合计约 31 帧/秒。训练必须走云 GPU（Kaggle）
-
-WSL `Ubuntu`（C++ 和模型转换）：
-
-- C++ 工程在 `~/traffic_count`（不在本仓库），`cd ~/traffic_count && cmake . && make` 编译，`./traffic_count test3` 运行
-- 依赖 OpenCV、`~/onnxruntime-linux-x64-1.31.0`
-- conda 环境 `rknn`（Python 3.10.22，RKNN-Toolkit2 2.5.0），`source ~/rknn_env.sh` 激活，负责 ONNX → RKNN
-- 交叉编译工具链 `gcc-aarch64-linux-gnu` 15.2.0 已装好，能产出 ARM 可执行文件；还缺 ARM 版 OpenCV 和 aarch64 的 `librknnrt.so`（建议板子到了从板子 rsync，别下 deb）
-
-## C++ 版（板端用）
-
-源码在 WSL 的 `~/traffic_count`。程序按 `CMakeLists.txt` 里的 `TRAFFIC_PROJECT_ROOT` 找 `configs/` 和 `data/videos/`，默认写死 `/mnt/d/multi-road-crossing-vehicle-count`，换机器改这一行。
-
-```
-CMakeLists.txt          编译配置，USE_RKNN 开关切推理后端
-src/main.cpp            读配置 → 裁 ROI → 推理 → 跟踪 → 计数 → 画 → 存/播
-src/detector.cpp/.hpp   ONNX Runtime 封装：letterbox 640、分数过滤、NMS
-src/rknn_detector.cpp   RKNN 封装（板子用），前处理和后处理与 ONNX 版一字不差
-src/counter.cpp/.hpp    side / near_segment / 死区 / count_dir
-src/config.cpp/.hpp     解析 configs/*.json
-src/tracker.cpp/.hpp    跟踪：卡尔曼预测 + 匈牙利 + 两阶段关联
-src/kalman_track.hpp    卡尔曼滤波封装（只有头文件）
-src/mini_json.hpp       自写的 JSON 解析，不依赖第三方
-src/recorder.hpp        过线记录写 csv
-```
-
-跟踪已经是完整的两阶段 ByteTrack，和 ultralytics 对齐：卡尔曼预测位置 → 高分框（≥0.25）匈牙利匹配，代价 `1-IoU`、阈值 0.8 → 没配上的轨迹再和低分框（0.1~0.25）匹配一次，阈值 0.5 → 高分框没人认领的建新轨迹，低分框没人认领的直接丢 → 两轮都没配上的 `lost+1`，超 30 帧删。
-两条容易搞错的地方：**Lost 状态的轨迹必须参与第一轮**，否则"留着等它回来"是空话；**匈牙利求出的是完美匹配**，必须再剔除代价超阈值的配对。
-
-另一条规则是静止目标过滤：轨迹离出生位置不到 `kMinTravel`（4 像素）就算没动，这类目标既不计数也不画框。红绿灯、路牌、广告牌都被这条挡住。
-
-实测（CPU，核显机器）：
-
-| 视频 | 帧数 | 帧率 | A 线 | B 线 | 备注 |
-|---|---|---|---|---|---|
-| test3 | 2535 | 18~19 FPS | 243 | 186 | B 线人工真值 ≥190，差 4 次（2%） |
-| test2 | 27241 | 17.5 FPS | 842 | 893 | Python 版是 838 / 893，总数差 4 次（0.2%） |
-
-test2 累计分配 4608 个编号，实际计数 1735 次。比例高是因为俯视画面里大量车只在 ROI 内经过、从不穿线，照样会建轨迹发编号，属正常。
-
-## 已知问题
-
-- 官方 YOLOv8n 没在路口监控的机位和光照上训练过，远景小车、被遮挡的车会漏检。这是要自己标数据微调的原因。
-- 跟踪 ID 会断。车被遮挡或漏检一帧就换新号，所以不能拿「出现过多少 ID」当车流量，必须用穿线计数。
-- 红绿灯和杆子会被检成车（置信度 0.37 左右）。调 `conf` 去不掉，因为远处真车也在这个区间。静止过滤能不计数，但根治要标数据。
-- C++ 的跟踪已经和 Python 的 ByteTrack 对齐（卡尔曼 + 匈牙利 + 两阶段）。test2 全片两边只差 4 次（0.2%）；test3 的 B 线 C++ 186、Python 165，差的这 21 次来自检测能力（远处小车、遮挡），不是跟踪。
-- C++ 的 RKNN 版还没编译过，也没上板。`rknn_detector.cpp` 送的是 float32 NCHW 0~1，这类问题只有真编译、真跑才会暴露。
-- test4 那辆被植被挡住的白色轿车，模型直接漏掉，至今没解决。
-- 静止过滤有副作用：等红灯的车在开动前不画框。计数不受影响，因为过线那一刻它已经在动了。
+模型基于 UA-DETRAC 数据集微调，数据集版权归原作者所有。YOLOv8 采用 Ultralytics 开源实现，
+遵循其 AGPL-3.0 许可。
