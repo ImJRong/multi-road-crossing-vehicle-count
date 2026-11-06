@@ -159,6 +159,11 @@ cd ~/code && ./traffic_web_single 8080    # 网页版，浏览器开 http://192.
 
 **只有前三个是好的，其中 head4 是最优。** 后面全是失败产物，留着为了不重复踩坑。
 
+> **2026-11-03 清理记录**：板子上已删掉 `v6` / `v8_h250` / `v9_h250` / `v10_int8` / `v11_auto` / `int8_normal`
+> 六个失败模型和一次性的 `dump_*` 调试工具（D 盘 `models/` 里 `v10_int8`、`v11_auto`、`int8_250` 也一并删了）。
+> **失败原因都记在本文里，不需要留着模型文件。** 板子现有 5 个：`best_detrac.rknn`(head4 主力)、
+> `v12_head4`(备份)、`v7`(对照组)、`fp16`(对照)、`old_ok`(旧模型)。
+
 ### 5.2 唯一验证通过的转换配方（v7，照这个抄）
 
 | 项 | 值 |
@@ -741,20 +746,29 @@ v11 : 四路全是 0~638                                        ← 坏得更彻
 **框偏移已解决（0.03px），计数漏已收尾（断号降 34.3%）**。
 模型转换这条路已经走到头，不要再碰。
 
-### 仓库提交状态（2026-11-02 收工时的状态）
+### 仓库提交状态（2026-11-06 更新）
 
 | 仓库 | 提交 | 推送 |
 |---|---|---|
-| `D:\multi-road-crossing-vehicle-count` | `a4f3e48`「修复框偏移」 | ✅ 已推送，与 origin 同步 |
-| WSL `~/traffic_count` | `9eff195`「修复框偏移」 | ❌ **未推送**，需手动执行下面这条 |
+| `D:\multi-road-crossing-vehicle-count`（Python + 文档） | `0faaa7f`「修复框偏移」 | ✅ 已推送 |
+| WSL `~/traffic_count`（C++ 板端） | `9ffc855`「加四路分屏网页版」 | ✅ 已推送 |
 
-```bash
-cd ~/traffic_count && git push --force-with-lease
-```
+两个仓库现在都跟 origin 同步，`git rev-list --count origin/main...HEAD` 都是 `0 0`。
 
-> 为什么是 force：WSL 那边 amend 过提交，本地和远端分叉了（ahead 1 / behind 1）。
-> 本地代码是全的，推送只是把远端同步过来，**不影响任何功能**，什么时候推都行。
-> 走代理时 WSL 里 `git push` 会卡死，试不通就直接跳过，不要反复重试。
+**`9ffc855` 提交了什么**（四路网页版整套代码第一次入库）：
+- 新增 `src/web_main_quad.cpp`（648 行）与 `web/quad.html`
+- `src/web_server.cpp` 507→580 行、`web_server.hpp` 146→172 行（多通道版）
+- `web.cmake` 加 `traffic_web_quad` 目标
+- `src/rknn_detector.cpp/hpp` 加 `set_core()` + `rknn_set_verbose()`
+- 删 9 个弃用转换脚本，README 补十二点五节
+
+> **推送踩坑**：走 `127.0.0.1` 代理时会卡在 `Failed to connect ... after 0 ms`。
+> 解法是单次绕过：`git -c http.proxy= -c https.proxy= push origin main`，一次就通。
+
+> **踩坑（2026-11-06）**：D 仓库和 origin 曾各自有一个「修复框偏移」提交（本地
+> `ca9fc45`、远端 `0faaa7f`），只差 MEMORY.md 里 8 行仓库状态表，导致 `ahead 1,
+> behind 1`。处理办法是 `git reset --hard origin/main` 后把本地那几行重新 apply，
+> 不要 force push 覆盖远端。
 
 ### tools 目录结构（2026-11-02 整理过）
 
@@ -769,11 +783,16 @@ tools/
 
 详细说明见 `tools/README.md`。
 
-### 当前状态：没有待办
+### 当前状态（2026-11-06）
 
-框偏移已解决，计数漏已收尾，本轮工作结束。
+框偏移已解决，计数漏已收尾，四路分屏网页版已入库并推送。
+板子的四路参数默认值不再写死，改成启动时读 `configs/testN.json` 的 `detect.conf/iou`。
 
 如果以后要继续提升，按投入产出比排序：
+
+0. **四路分屏页面卡顿**（唯一新出现的问题）—— 4 条 MJPEG 常驻流单条约 500 KB/s，
+   占满浏览器对同一主机的 6 个并发连接，`/api/state` 轮询只能排队。
+   治法：缩略图降到 3~5 fps 或降分辨率，或把 5 次轮询合并成一次请求。
 
 1. **`near_segment` 那条（未查证）** —— 唯一还没验证过的怀疑点。
    做法：给 `counter.cpp` 加轨迹日志（每帧每车：id、中心、在线的哪一侧、
