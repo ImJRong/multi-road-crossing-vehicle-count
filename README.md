@@ -157,7 +157,6 @@ multi-road-crossing-vehicle-count/
 │   ├── head4_原理详解.md   框偏移方案推导（11 节，11 张图）
 │   ├── 设计要点.md         设计决策与待做清单
 │   ├── INT8验证方案.md     INT8 精度验证结论
-│   ├── 归档-项目记忆-2026-10-22.md  已归档的历史记录
 │   ├── figures/            原理讲解配图（11 张）
 │   └── screenshots/        INT8 偏移现象的现场截图（3 张）
 └── outputs/                运行产物：过线记录 CSV、带框视频（不进仓库）
@@ -475,6 +474,7 @@ anchor + 右距离          刻度 0.327
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.0.1 | 2026-11-07 | 文档整理：板子文档同步进仓库、删除过时归档；抓拍图改为启动时清空；模型目录只留一个；源码补头注释；README 修正与实际不符的条目 |
 | v1.0.0 | 2026-11-06 | 补齐工程文档：README 按规范重写，操作层内容归档至 `docs/实操手册.md` |
 | v0.9.0 | 2026-11-02 | 修复框偏移：模型输出改为 DFL 距离，中心偏移 6.75 px → 0.03 px；修复计数漏（断号下降 34.3%） |
 | v0.8.0 | 2026-11-01 | 修复计数记录只增不删的内存泄漏；模型转换配方定型 |
@@ -489,7 +489,7 @@ anchor + 右距离          刻度 0.327
 | 作者 | jiarong（RONGG） |
 | 仓库 | https://github.com/ImJRong/multi-road-crossing-vehicle-count |
 | 相关仓库 | https://github.com/ImJRong/multi-road-crossing-vehicle-count-cpp （板端 C++ 实现） |
-| 日期 | 2026-11-06 |
+| 日期 | 2026-11-07 |
 
 **License**：仅供学术研究（Academic Use Only）。完整条款见 [LICENSE](LICENSE)。
 未经作者书面许可，不得用于商业用途、不得再分发与对外提供服务。

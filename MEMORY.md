@@ -1,7 +1,6 @@
 # 项目交接文档（车流量统计 · RK3588 板子端）
 
-> 最后更新：**2026-11-02 白天**。**先看完这一份再动手。**
-> 同目录 `2026-10-2x.md` 是当天流水，里面的结论可能有错；**与本文冲突时以本文为准**。
+> 最后更新：**2026-11-07**。**先看完这一份再动手。**
 > **框偏移已解决**，原理详见 `docs/head4_原理详解.md`（带图，从零讲起）。
 
 ---
@@ -23,7 +22,7 @@
 详见 6.1 节。
 
 **已经堵死的路（别再试）**：
-- rknn-toolkit2 的**手动混合量化**：1.6.0 崩 `KeyError: Concat_1_output_0`，2.5.0 转出来是坏的（详见 5.8）
+- rknn-toolkit2 的**手动混合量化**：1.6.0 崩 `KeyError: Concat_1_output_0`，2.5.0 转出来是坏的（详见 5.7）
 - **2.5.0 转普通 INT8 也是坏的**（w/h 通道被撑大十几倍，见 6.2）
 - `mmse` / `kl_divergence` / `hybrid_level` 这些量化参数：1 像素级收益，没用
 - `count_dir` 只数一个方向 —— **不是缺陷**，这几个路口是单行道，设计如此
@@ -32,24 +31,21 @@
 
 ## 〇点五、文档地图
 
+板子 `~/code/docs/` 是主力（板子是主力机器），仓库里的同名文件是同一份。
+
 | 文档 | 内容 | 什么时候看 |
 |---|---|---|
-| `MEMORY.md`（本文） | 状态、交接信息、踩坑、待办、**性能实测（六点五）** | **接手第一份** |
-| `README.md` | 怎么跑、目录结构、进度 | 想跑起来 |
-| `docs/head4_原理详解.md` | 框偏移从零推导，11 节 11 图 | 想懂原理 |
-| `tools/README.md` | 50+ 脚本分 5 组，标清能跑/别跑 | 要转模型或诊断 |
-| WSL 仓库 `docs/代码走读.md` | 逐文件逐函数讲解：每个函数干什么、为什么这么写 | 要读代码 |
+| `docs/MEMORY.md`（本文） | 交接文档：状态、连接、编译运行、踩坑、性能实测、待办 | **接手第一份** |
+| `README.md`（板子根目录） | 项目简介、架构分层、目录结构、编译部署 | 想跑起来 |
+| `docs/head4_原理详解.md` | 框偏移从零推导，11 节 11 图 | **想懂量化原理（本方向核心）** |
+| `docs/技术文档.md` | 完整技术细节：算法、实测原始数据、方案对照 | 要查具体数字 |
+| `docs/代码走读.md` | 逐文件逐函数讲解 | 要读代码 |
+| `docs/实操手册.md` | 训练数据准备、参数标定、量化实验 | 要重训或重转模型 |
+| `docs/INT8验证方案.md` | INT8 掉了多少精度（含实测结论） | 评估量化代价 |
 | `docs/设计要点.md` | 待做改进清单（已标完成情况） | 规划下一步 |
-| `docs/INT8验证方案.md` | INT8 掉了多少精度（已执行，含结论） | 评估量化代价 |
-| `docs/归档-项目记忆-2026-10-22.md` | 10-17~10-22 的流水（**已归档，别当依据**） | 追溯历史决策 |
+| `docs/tools脚本清单.md` | 转换/诊断脚本怎么用 | 要转模型 |
 
-> **板子上有一份完整副本**：`~/code/docs/`（2026-11-06 同步），包含本文、
-> `head4_原理详解.md`、`实操手册.md`、`INT8验证方案.md`、`设计要点.md`、`tools脚本清单.md`、
-> `技术文档.md`、`代码走读.md`，另有 `figures/`（11 张）与 `screenshots/`（3 张）。
-> 板子是主力机器，平时在板子上读文档就够了。入口是 `~/code/docs/文档索引.md`。
-> **但 `~/code` 不是 git 仓库**，文档在板子上改了不会回流，要改请改 PC 上的仓库再同步。
-
-> **只想看性能数字**：直接跳到 **六点五节**（吞吐、延迟、实时流模拟、硬件上限）。
+**只想看性能数字**：直接跳到 **六点五节**（吞吐、延迟、实时流模拟、硬件上限）。
 
 ---
 
@@ -88,7 +84,9 @@ ssh orangepi@192.168.1.105     # 密码 orangepi，sudo 也是 orangepi
 
 **板子现在没有外网**：路由器里留了两条 IP-MAC 绑定（`.105`/`.107`），板子的 MAC 一换就不匹配，路由器会把外网挡掉（SSH 和局域网不受影响）。要外网就让用户在路由器里删掉那两条绑定。
 
-**WSL 的限制**：`wsl.exe` 在安全黑名单，助手**只能读写 WSL 文件，不能执行命令**。所有 WSL 操作都要用户在终端里敲。
+**WSL**：`wsl.exe -e bash -lc "<命令>"` 可用（早期版本记的「黑名单」已不成立）。
+WSL 里 Python 环境是 `~/miniforge3`（不是 miniconda），
+`conda activate rknn16` 是 rknn-toolkit2 1.6.0。
 
 ---
 
@@ -105,44 +103,91 @@ ssh orangepi@192.168.1.105     # 密码 orangepi，sudo 也是 orangepi
 
 ```
 /home/orangepi/code/
-├── traffic_count          # 命令行版（跑视频出结果）
-├── traffic_web_single     # 网页版（浏览器实时看）
-├── configs/test1~4.json   # ROI / 计数线 / 阈值
-├── models/                # 见第五节
-├── data/videos/           # test1~4.mp4
-├── output/                # 结果视频、CSV、抓拍
-└── src/                   # main.cpp / web_main_single.cpp / rknn_detector.cpp
-                           # tracker.cpp / counter.cpp / web_server.cpp / config.cpp
+├── README.md               # 项目说明（十节规范版）
+├── traffic_count           # 命令行版（跑视频出结果）
+├── traffic_web_single      # 单路网页版
+├── traffic_web_quad        # 四路网页版（推荐）
+├── rknn_probe              # 模型体检工具
+├── multi_eval              # 多路并行压测
+├── pipeline_bench          # 流水线压测
+├── configs/test1~4.json    # ROI / 计数线 / 阈值
+├── models/best_detrac.rknn # 模型（只有一个，见第五节）
+├── data/videos/            # test1~4.mp4
+├── output/                 # 结果视频、CSV、抓拍
+├── docs/                   # 全部文档（见〇点五文档地图）
+└── src/                    # 22 个 cpp/hpp，C++ 源码
 ```
+
+**板端代码的正本在 WSL 仓库** `~/traffic_count`（git 仓库，远程
+`multi-road-crossing-vehicle-count-cpp`）。`~/code` 不是 git 仓库，
+代码改了要手动同步回 WSL 仓库再提交。
 
 ---
 
 ## 四、编译和运行
 
+### 4.1 编译
+
 ```bash
 cd ~/code
-make traffic_count          # 命令行版
-make traffic_web_single     # 网页版
+make -j4                    # 全部目标
+make traffic_web_quad       # 只编四路网页版
+make traffic_web_single     # 只编单路网页版
 ```
 
-改了 `CMakeLists.txt` 的路径后**必须**：
+`make help` 能看到全部目标：`traffic_count`（命令行）、`traffic_web_single`、
+`traffic_web_quad`（四路）、`rknn_probe`（模型体检）、`multi_eval`（多路压测）、
+`pipeline_bench`（流水线压测）。
+
+改了 `CMakeLists.txt` 的路径后**必须**重建缓存：
 
 ```bash
-rm -f CMakeCache.txt && cmake . -DUSE_RKNN=ON && make
+rm -f CMakeCache.txt && cmake . -DUSE_RKNN=ON -DRKNN_ROOT=/usr \
+    -DTRAFFIC_PROJECT_ROOT=/home/orangepi/code && make -j4
 ```
 
-两个路径必须对：`TRAFFIC_PROJECT_ROOT=/home/orangepi/code`、`RKNN_ROOT=/usr`
+### 4.2 运行
 
-运行：
+**命令行版**（跑完退出，结果在 `output/`）：
 
 ```bash
-cd ~/code && ./traffic_count test1        # 跑完退出
-cd ~/code && ./traffic_web_single 8080    # 网页版，浏览器开 http://192.168.1.105:8080
+cd ~/code && ./traffic_count test1
 ```
+
+**单路网页版**：
+
+```bash
+cd ~/code && ./traffic_web_single 8080
+# 浏览器开 http://192.168.1.105:8080
+```
+
+**四路网页版**（推荐，开机就跑、视频循环）：
+
+```bash
+cd ~/code && setsid ./traffic_web_quad 8081 test1 test2 test3 test4 20 \
+    > /tmp/quad.log 2>&1 < /dev/null &
+# 浏览器开 http://192.168.1.105:8081
+```
+
+参数顺序是 `[端口] 配置1~4 [每路fps]`，都可省。**必须用 `setsid`**，
+`nohup ... &` 在 SSH 非交互 shell 里会被回收。
+
+### 4.3 停止
+
+```bash
+pkill -f "[t]raffic_web_quad"
+pkill -f "[t]raffic_web_single"
+```
+
+方括号是为了不让 `pkill` 匹配到执行这条命令的 shell 自己。
+
+### 4.4 几条注意
 
 - `output: "show"` 在板子上**必崩**（没显示器），只能用 `"save"` 或 `"none"`
-- 网页版是常驻进程，**测完必须 `pkill -f traffic_web_single`**
-- 启动时打印「服务已启动」**不代表成功**：端口被占时 `web_server.cpp` 会报错，但 `main.cpp` 还会无条件再打印一遍（代码 bug，别被忽悠）
+- 启动打印「服务已启动」**不代表成功**：端口被占时 `web_server.cpp` 会报错，
+  但主程序还会再打印一遍（遗留代码 bug，别被忽悠）
+- 网页上改的 conf/iou 只存内存，不写 json；进程重开回到配置文件的值
+- 抓拍图存 `output/snapshots/`，**每次启动会清空**（`clear_snap_dir()`）
 
 ---
 
@@ -150,28 +195,23 @@ cd ~/code && ./traffic_web_single 8080    # 网页版，浏览器开 http://192.
 
 ### 5.1 板子上现有的模型
 
+`models/` 里只有一个：
+
 | 文件 | 大小 | 说明 |
 |---|---|---|
-| `best_detrac.rknn` | 5,969,848 | **当前在用 = head4**（md5 `af1bfa9f...`） |
-| `best_detrac_v12_head4.rknn` | 5,969,848 | 同一个 head4，备份 |
-| `best_detrac_v7.rknn` | 6,482,288 | 旧模型（1.6.0 + head3），框偏 6.75px，**留作对照** |
-| `best_detrac_old_ok.rknn` | 6,482,352 | 10-30 那份旧模型（md5 `5f2ae464...`），可用 |
-| `best_detrac_fp16.rknn` | 9,730,814 | fp16 不量化，精度好但 6.6 fps |
-| `best_detrac_v10_int8.rknn` | 5,169,767 | 2.5.0 普通 INT8，**坏的**（w/h 撑大） |
-| `best_detrac_v11_auto.rknn` | 7,652,903 | 2.5.0 + auto_hybrid，**也是坏的** |
-| `best_detrac_v6.rknn` | 6,538,889 | 坏的，分数全 0 |
-| `best_detrac_int8_normal.rknn` | 5,169,344 | 坏的，和 v10 输出完全一样 |
-| `best_detrac_v8_h250.rknn` | 5,171,354 | 混合量化，输出布局错乱 |
-| `best_detrac_v9_h250.rknn` | 5,171,927 | 混合量化，通道语义被破坏 |
+| `best_detrac.rknn` | 5,969,848 | **head4 + 1.6.0 + INT8**，md5 `af1bfa9f11192d15fb30286067568651` |
 
-**只有前三个是好的，其中 head4 是最优。** 后面全是失败产物，留着为了不重复踩坑。
+这就是当前在用的模型，`TRAFFIC_PROJECT_ROOT "/models/best_detrac.rknn"` 写死在
+`src/web_main_quad.cpp:73` 与 `src/web_main_single.cpp:70`。
 
-> **2026-11-03 清理记录**：板子上已删掉 `v6` / `v8_h250` / `v9_h250` / `v10_int8` / `v11_auto` / `int8_normal`
-> 六个失败模型和一次性的 `dump_*` 调试工具（D 盘 `models/` 里 `v10_int8`、`v11_auto`、`int8_250` 也一并删了）。
-> **失败原因都记在本文里，不需要留着模型文件。** 板子现有 5 个：`best_detrac.rknn`(head4 主力)、
-> `v12_head4`(备份)、`v7`(对照组)、`fp16`(对照)、`old_ok`(旧模型)。
+> **2026-11-07 清理**：删掉 `v12_head4`（与主力 md5 完全相同，纯重复）、`v7`（旧 head3，
+> 框偏 6.75px）、`fp16`（6.6 fps 太慢）、`old_ok`（10-30 旧版）。`models/` 34M → 5.7M。
+> 之前 11-03 还删过 `v6` / `v8_h250` / `v9_h250` / `v10_int8` / `v11_auto` / `int8_normal`。
+> **每个失败模型的原因都记在 5.7 与 6.2，不需要留文件。**
 
-### 5.2 唯一验证通过的转换配方（v7，照这个抄）
+要用别的模型对比，用 `multi_eval --model <路径>` 临时指定，不要往 `models/` 里再堆。
+
+### 5.2 转换配方（head3 的 v7 已验证通过，head4 在此基础上再改）
 
 | 项 | 值 |
 |---|---|
@@ -310,7 +350,7 @@ YOLOv8 的检测头在 ONNX 图里节点名前缀是 `/model.22/`，官方叫 `D
 权重一个字节没改、换算公式验证差值为 0。
 **代价**是后面那几步得自己写对（anchor 网格、stride 分段、距离顺序，错一个全错）。
 
-### 5.6 怎么复现
+### 5.5 怎么复现
 
 **head4（当前主线）：**
 
@@ -334,7 +374,7 @@ conda activate rknn16
 python /mnt/d/multi-road-crossing-vehicle-count/tools/03_failed/convert_head3.py
 ```
 
-### 5.7 怎么验证（两步，别只看帧率）
+### 5.6 怎么验证（两步，别只看帧率）
 **第一步：模型体检**（工具已经在板子项目里：`src/rknn_probe.cpp`，编出来是 `~/code/rknn_probe`）
 
 ```bash
@@ -364,99 +404,36 @@ cd /tmp && /home/orangepi/code/traffic_count /tmp/t1v7.json
 
 合格：`box0` 的 `x1` 在 150~170、`y1` 是 -3 左右、约 4 框/帧、A 线 4 辆。
 
-### 5.8 混合量化：两条路都试过了，都不行（2026-11-01 详细记录）
+### 5.7 混合量化：试过，走不通（别再试）
 
-**目的**：INT8 的框偏移 6~22px 来自 DFL 量化，想让 DFL 那几层走 fp16、其余仍 int8，
-既保住精度又不掉速度。
+**目的**：INT8 的框偏移想让 DFL 那几层走 fp16、其余仍 int8，既保精度又不掉速度。
 
-**结论：1.6.0 和 2.5.0 都走不通。别再重复。** 下面是完整过程，省得下次重新试。
+**结论：1.6.0 和 2.5.0 都走不通，别再花时间。**
 
-#### 1.6.0：step2 必定崩
-
-```
-hybrid_quantization_step2 → quant_optimizer._p_adjust_tanh_sigmoid
-KeyError: '/model.22/Concat_1_output_0'
-```
-
-工具要查的层名，和 cfg 里实际的名字对不上：
-
-| 工具要找 | cfg 里实际是 |
+| 版本 | 结果 |
 |---|---|
-| `/model.22/Concat_1_output_0` | `/model.22/Concat_1_output_0_shape4_/model.22/Sigmoid` |
+| 1.6.0 | step2 崩在 `quant_optimizer._p_adjust_tanh_sigmoid`（`KeyError: '/model.22/Concat_1_output_0'`）。改 35 层、改 2 层、只改 dtype 三种配置崩在同一行 → 工具自身 bug，绕不过去 |
+| 2.5.0 | step1 能过（必须 `proposal=False`），step2 能出模型，但**转出来是坏的** |
 
-试过三种配置：改 35 层、改 2 层、只改 `quantize_parameters` 的 dtype 不碰
-`custom_quantize_layers` —— **三次崩在同一行**，说明和改什么无关，是工具自身 bug。
+2.5.0 出的两个模型都坏：
 
-#### 2.5.0：step1 能过，但生成的模型不能用
+- **v8_h250**（DFL 和 Mul 都 fp16）：输出变 FLOAT16 后编译器插了 NC1HWC2 布局重排，
+  元素顺序不再是 NCHW。anchor 0 的 `cy` 应该是 5，读出来是 397。
+- **v9_h250**（只有 DFL 内部 fp16，输出仍 int8）：DFL 距离 0~15 和下游坐标 0~640
+  共用一套量化参数，0~15 被压成 6 个台阶，4 个通道范围全变成 0~638。
 
-`proposal=True` 崩在 `hybrid_proposal.proposal → expand_batch → infer_shapes`：
-`KeyError: '/model.22/dfl/conv/Conv_output_0'`。**用 `proposal=False` 能过**，
-而且本来也不需要它的自动建议（1.6.0 那次的建议全落在骨干前 7 层，对坐标精度毫无帮助）。
+**这不是混合量化功能的问题，是量化参数共用的问题**（根因见 6.2）。
+调量化救不了，正确解法是 head4。这两个模型已从板子删除，失败原因记在这里就够了。
 
-step2 的三个坑（按踩到顺序）：
-
-1. **`step2` 之前不能 `load_onnx`** —— 报
-   `The model already exists. Do not call 'load_onnx'...`。
-   `model_input` 要传 step1 生成的 `.model` 文件，不是 ONNX。
-2. **`custom_quantize_layers` 的格式** —— step1 生成的是 `custom_quantize_layers: {}`
-   （空字典同一行）。直接往下追加缩进条目会导致 YAML 解析失败：
-   `expected <block end>, but found '<block mapping start>'`。
-   必须先把 `{}` 删掉，改成块状映射。
-3. **`quantize_parameters` 是只读的** —— 改了里面任何一层的 `dtype` 就报
-   `The quantize_parameters['X']['dtype'] is not allowed to be modified!`。
-   fp16 层的量化参数由 step2 自己重算，用户只该动 `custom_quantize_layers`。
-4. **层名必须和 cfg 里完全一致**，写错报 `Invalid operands name 'X' in custom_quantize_layers!`。
-   2.5.0 的 DFL 实际只有 3 个张量，名字也和 1.6.0 不同：
-   ```
-   /model.22/dfl/Reshape_output_0
-   /model.22/dfl/Softmax_output_0_sw_sw      ← 注意 _sw_sw 后缀
-   /model.22/dfl/conv/Conv_output_0
-   ```
-   没有 `Transpose_1_output_0`，也没有 `Mul_2_output_0_shape4`。
-5. **Reshape/Transpose/Concat/Slice 这类布局层不能写进去**（没有独立量化参数）。
-
-#### 终于生成出来的两个模型，都不能用
-
-| 模型 | 配置 | 结果 |
-|---|---|---|
-| `best_detrac_v8_h250.rknn` | DFL + `Mul_2_output_0` 都 fp16 | **输出布局错乱** |
-| `best_detrac_v9_h250.rknn` | 只有 DFL 内部 fp16，输出仍 int8 | **4 个通道语义被破坏** |
-
-**v8 的问题**：boxes 输出变 FLOAT16 后，编译器插了 NC1HWC2 布局重排
-（编译日志：`116 Reshape /model.22/Mul_2_output_0-rs__float16 FLOAT16 NC1HWC2`），
-元素顺序不再是标准 NCHW。实测 anchor 0 的 `cy` 应该是 5，读出来是 397。
-
-**v9 的问题**：DFL 输出被 `exDataConvert` 从 float16 转回 int8 时，量化参数选错了。
-DFL 算出来的"距离"范围是 0~15，和下游坐标（0~640, scale=2.5）共用一套参数，
-0~15 被压成只剩 6 个台阶。实测 4 个通道的范围全都变成 0~638（v7 里 4 个通道范围各不相同），
-说明通道语义被破坏了。
-
-**判断依据**（下次可以直接用）：
-```bash
-/tmp/ch_scan 模型.rknn data/videos/test1.mp4 200
-```
-好的模型，4 个通道范围应该各不相同：
-```
-ch0(cx) 0~630 | ch1(cy) 0~615 | ch2(w) 2.5~510 | ch3(h) 2.5~230
-```
-如果 4 个通道范围一样（都是 0~638），就是坏了。
-
-#### 以后想再提精度，只剩这些路
-
-1. **更好的校准集**（最大收益，且已经做过一轮）
-2. **直接上 fp16 模型**：精度和 FP32 无差，但 6.6 fps（NPU 计算 132ms），需要配跳帧
-3. **QAT（量化感知训练）**：训练时把量化误差算进去，最彻底，但要重训
-4. `mmse` / `kl_divergence`：只是换裁剪范围，1 像素级收益，不值得
-
-### 5.9 试过但没用的（别再重复）
+### 5.8 试过但没用的（别再重复）
 
 - `quantized_dtype`、`hybrid_level`、`custom_string`、`quantized_input_type` —— 全是猜的，无效
 - `mmse` / `kl_divergence` —— 只是换裁剪范围，1 像素级收益；mmse 还容易 OOM
 - 2.5.0 的 `disable_rules=['seperate_conv_rs_split']` —— 只对 2.5.0，1.6.0 没这个参数
 - `optimization_level=3` —— 会把 DFL 坐标算飞（框巨大错位），只能用默认/1
-- **rknn-toolkit2 的混合量化**（详见 5.6）—— 两个版本都有 bug
+- **rknn-toolkit2 的混合量化**（详见 5.7）—— 两个版本都有 bug
 
-**结论：模型这块就停在 1.6.0 + head3 + INT8（v7）。**
+**结论：模型这块停在 1.6.0 + head4 + INT8（`best_detrac.rknn`）。这是当前最优，不要再折腾。**
 
 ---
 
@@ -514,7 +491,7 @@ cd ~/code
 ./multi_eval configs/test1.json configs/test2.json configs/test3.json configs/test4.json \
     --frames 3600 --out output/full_head4
 ./multi_eval configs/test1.json configs/test2.json configs/test3.json configs/test4.json \
-    --frames 3600 --model models/best_detrac_v7.rknn --out output/full_v7
+    --frames 3600 --model /path/to/other.rknn --out output/full_other
 
 # 把两个 summary.csv 拉回 PC 后对比
 python tools/02_diagnose/compare_models.py full_v7_summary.csv full_head4_summary.csv
@@ -573,7 +550,7 @@ v11 : 四路全是 0~638                                        ← 坏得更彻
 | **head4（现在用的）** | **偏 0.03px** | 18.3 fps | **✅ 已采用** |
 | v7（旧） | 偏 6.75px | 18.3 fps | 留作对照 |
 | 纯 FP16 | 与 FP32 无差 | 6.6 fps | 太慢，没必要了 |
-| 混合量化 | — | — | 两个 toolkit 版本都失败（5.8） |
+| 混合量化 | — | — | 两个 toolkit 版本都失败（5.7） |
 | 后处理补偿 | 治标 | 不变 | 不需要了 |
 
 
@@ -712,36 +689,25 @@ v11 : 四路全是 0~638                                        ← 坏得更彻
 
 ## 七、踩的坑（都是真踩的）
 
-1. **`output: "show"` 必崩**（没显示器）
-2. **改 `CMakeLists.txt` 路径后不删 `CMakeCache.txt`** → 一直用旧路径
-3. **CPU 调频**：默认 `ondemand`，实测同一段 400 帧 **16.0 fps**；设 `performance` 后 **20.6 fps**。开关在
-   ```bash
-   /sys/devices/system/cpu/cpufreq/policy{0,4,6}/scaling_governor
-   ```
-   重启失效。用户倾向 ondemand（觉得够流畅），跑性能测试时要切 performance 才公平。
-4. **板子重启后 `/tmp` 清空**，探针、临时脚本都要重传
-5. **WSL 文件从 Windows 侧能读，覆盖写不可靠**（新建有时成功，覆盖/Edit 常失败）→ 脚本放 D 盘，让 WSL 通过 `/mnt/d/...` 读
-6. **网页参数只存内存**，不改 json，重启即恢复
-7. **`pkill -f traffic_web_single` 会杀掉自己那条命令**（pattern 匹配到 bash -c），
-   要用 `pkill -f "[t]raffic_web_single"`。用 `pkill -x` 也不行，进程名被截断成 15 字符。
-8. **在错误的工作目录下跑 rknn 脚本**：step1 生成的文件会落在当前目录。
-   在 `~/traffic_count` 下跑才对；之前误在 `/mnt/c/Windows/System32` 跑，
-   文件全掉到 System32 里了。
-9. **rknn-toolkit2 的 hybrid 打印信息是编译后打包的**，`quant_optimizer` 等模块只有 `.so`，
-   看不到源码。出问题时只能靠报错原文反推规则。
-10. **`rknn_probe` 的 `head` 只打印前 12 个值**，看不出是哪个通道坏了。
-    要判断通道语义，得用 `tools/02_diagnose/ch_scan.cpp`（每通道独立统计 min/max）。
-11. **DFL 的 stride 是 8400 长的数组，不是标量**。
-    `Constant_15` 里前 6400 个是 8、中 1600 个是 16、后 400 个是 32。
-    当成标量 8 算，后两段全错（实测最大差 453 像素）。
-12. **anchor 网格也要分段生成**：80×80 / 40×40 / 20×20，值 = (列号+0.5, 行号+0.5)。
-    直接线性排 0.5~79.5 是错的。
-13. **MSYS 的 bash 会把 `D:\path` 改写成 `/d/path`**，传给 Windows 的 Python 就找不到文件。
-    要在 ops_bash 里调 Windows Python 且带路径参数，注意这一点。
-14. **`\\wsl.localhost\` 的 UNC 路径要用正斜杠**（`//wsl.localhost/...`），
-    反斜杠在 Python/paramiko 里会报 `FileNotFoundError`。
-15. **脚本挪目录后 ROOT 会算错**。这些脚本用 `dirname(dirname(dirname(abspath(__file__))))` 往上退三层算项目根，
-    现在它们在 `tools/01_convert/` 这类子目录下才对。再挪目录要重新检查。
+只留以后还会再踩、且知道了能省事的。
+
+1. **`output: "show"` 在板子上必崩**（没显示器），只能用 `"save"` 或 `"none"`。
+2. **改了 `CMakeLists.txt` 的路径后不删 `CMakeCache.txt`** → 一直用旧路径，
+   症状是编译过了但运行找不到模型/配置。必须 `rm -f CMakeCache.txt && cmake . -DUSE_RKNN=ON`。
+3. **CPU 调频影响帧率**：默认 `ondemand` 实测 16.0 fps，设 `performance` 后 20.6 fps。
+   开关在 `/sys/devices/system/cpu/cpufreq/policy{0,4,6}/scaling_governor`，重启失效。
+   跑性能测试要切 `performance` 才公平。
+4. **`pkill -f traffic_web_single` 会杀掉自己那条命令**（pattern 匹配到 `bash -c`），
+   要用 `pkill -f "[t]raffic_web_single"`。`pkill -x` 也不行，进程名被截断成 15 字符。
+5. **网页上改的 conf/iou 只存内存**，不写 json，进程重开就回到配置文件的値。
+   四路版启动时从各自 `configs/testN.json` 读一次当初值（`WebServer::init_params()`）。
+6. **板子重启后 `/tmp` 清空**，编译的探针、临时脚本都要重传重编。
+7. **DFL 的 stride 是 8400 长的数组，不是标量**。前 6400 个是 8、中 1600 个是 16、
+   后 400 个是 32。当成标量 8 算，后两段全错（实测最大差 453 像素）。
+8. **anchor 网格也要分段生成**：80×80 / 40×40 / 20×20，值 = (列号+0.5, 行号+0.5)。
+   直接线性排 0.5~79.5 是错的。
+9. **`rknn_probe` 只打印前 12 个值**，看不出是哪个通道坏了。要判断通道语义得用
+   `tools/02_diagnose/ch_scan.cpp`（每通道独立统计 min/max）。
 
 ---
 
@@ -849,6 +815,38 @@ tools/
 > 模型转换这条路也走到头了（见速览的「已经堵死的路」）。
 
 
+### 2026-11-07 做的事
+
+1. **代码头注释**（只改板子，未推仓库）
+   核心文件本来就有合格头部，本次只补 `src/tracker.cpp` 一段（11 行，讲五段流程 +
+   两个关键点：低分框只救不建、输出不叠 EMA）。其余 9 个非核心文件各加 2~3 行，
+   只讲"这是什么、干什么用"，不写实现细节：`web_main_single.cpp`、`web_main_quad.cpp`、
+   `web_server.cpp`、`detector.cpp`、`mini_json.hpp`、`rknn_probe.cpp`、`multi_eval.cpp`、
+   `pipeline_bench.cpp`、`recorder.hpp`。`make -j4` 六个目标全部通过。
+
+2. **抓拍图改为启动时清空**
+   原先每次过线抓一张、从不清理，实测堆了 **9134 张 / 100M**。
+   `web_main_quad.cpp:77` 与 `web_main_single.cpp:76` 各加一个 `clear_snap_dir()`，
+   在 `main()` 开头调用。启动打印「已清空抓拍目录, 删除 N 张旧图」。
+   实测有效，`output/snapshots/` 现在启动即为空。
+
+3. **模型目录清理**
+   删掉 4 个没用的，只留 `best_detrac.rknn`（head4 主力）：
+   `v12_head4`（与主力 md5 完全相同，纯重复）、`v7`（旧 head3，框偏 6.75px）、
+   `fp16`（6.6 fps 太慢）、`old_ok`（10-30 的旧版）。`models/` 34M → 5.7M。
+
+4. **docs 精简**
+   删掉两个归档（`归档-板子端README-2026-11-02.md`、`归档-项目记忆-2026-10-22.md`）
+   与 `文档索引.md`（内容已过时，且指向的其他文档都在）。详见下节文档地图。
+
+5. **VS Code 远程每次都要下载 server 的根因**
+   PC 端 VS Code 默认自动更新，版本号一变板子就要配套下载新 server；板子无外网，
+   下载走 SSH 隧道所以慢。查证：`~/.vscode-server/cli/servers/` 有五个版本各 600M+，
+   共 3.7G。删掉 4 个旧版 + 旧式 `bin/`，只留当前在用的
+   `Stable-c4453f8ea430795f941c1b2ff6c9321135a74a02`，3.7G → 757M。
+   **治本**：PC 端 `Ctrl+,` 搜 `update mode`，改成 `manual` 或 `none`，否则还会再长。
+
+
 ### 已验证可用的工具
 
 **板子 `~/code` 下（永久）：**
@@ -870,7 +868,7 @@ cd ~/code
 
 # 换模型对比（同一批数据）
 ./multi_eval configs/test1.json configs/test2.json configs/test3.json configs/test4.json \
-    --frames 3600 --model models/best_detrac_v7.rknn --out output/full_v7
+    --frames 3600 --model /path/to/other.rknn --out output/full_other
 ```
 
 每个线程创建独立的 `RknnDetector`，按 `i % 3` 绑定到 0/1/2 号 NPU 核。
